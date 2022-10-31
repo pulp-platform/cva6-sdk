@@ -14,7 +14,7 @@ MKIMAGE     := u-boot/tools/mkimage
 NR_CORES := $(shell nproc)
 
 # SBI options
-PLATFORM := fpga/ariane
+PLATFORM := fpga/cheshire
 FW_FDT_PATH ?=
 sbi-mk = PLATFORM=$(PLATFORM) CROSS_COMPILE=$(TOOLCHAIN_PREFIX) $(if $(FW_FDT_PATH),FW_FDT_PATH=$(FW_FDT_PATH),)
 ifeq ($(XLEN), 32)
@@ -108,7 +108,7 @@ $(RISCV)/u-boot.bin: u-boot/u-boot.bin
 	cp $< $@
 
 $(MKIMAGE) u-boot/u-boot.bin: $(CC)
-	make -C u-boot openhwgroup_cv$(XLEN)a6_genesysII_defconfig
+	make -C u-boot pulp-platform_cheshire_defconfig
 	make -C u-boot CROSS_COMPILE=$(TOOLCHAIN_PREFIX)
 
 # OpenSBI with u-boot as payload
@@ -125,21 +125,25 @@ $(RISCV)/spike_fw_payload.elf: $(RISCV)/Image
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/spike_fw_payload.bin
 
 # need to run flash-sdcard with sudo -E, be careful to set the correct SDDEVICE
-# Number of sector required for FWPAYLOAD partition (each sector is 512B)
-FWPAYLOAD_SECTORSTART := 2048
-FWPAYLOAD_SECTORSIZE = $(shell ls -l --block-size=512 $(RISCV)/fw_payload.bin | cut -d " " -f5 )
-FWPAYLOAD_SECTOREND = $(shell echo $(FWPAYLOAD_SECTORSTART)+$(FWPAYLOAD_SECTORSIZE) | bc)
-SDDEVICE_PART1 = $(shell lsblk $(SDDEVICE) -no PATH | head -2 | tail -1)
-SDDEVICE_PART2 = $(shell lsblk $(SDDEVICE) -no PATH | head -3 | tail -1)
-# Always flash uImage at 512M, easier for u-boot boot command
-UIMAGE_SECTORSTART := 512M
-flash-sdcard: format-sd
-	dd if=$(RISCV)/fw_payload.bin of=$(SDDEVICE_PART1) status=progress oflag=sync bs=1M
-	dd if=$(RISCV)/uImage         of=$(SDDEVICE_PART2) status=progress oflag=sync bs=1M
+DT_SECTORSTART 		:= 2048
+DT_SECTOREND   		:= 264191	# 2048 + 128M
+FW_SECTORSTART 		:= 264192
+FW_SECTOREND   		:= 526335	# 264192 + 128M
+UIMAGE_SECTORSTART 	:= 526336
+UIMAGE_SECTOREND	:= 1050623	# 526336 + 256M
+ROOT_SECTORSTART	:= 1050624
+ROOT_SECTOREND		:= 0
+
+flash-sdcard: $(RISCV)/fw_payload.bin $(RISCV)/uImage format-sd
+	dd if=$(RISCV)/fw_payload.bin of=$(SDDEVICE)2 status=progress oflag=sync bs=1M
+	dd if=$(RISCV)/uImage         of=$(SDDEVICE)3 status=progress oflag=sync bs=1M
+	mkfs.fat -F32 -n "CHESHIRE" $(SDDEVICE)4
+	@echo "Don't forget to flash the device tree binary to $(SDDEVICE)1 :)"
 
 format-sd: $(SDDEVICE)
+	@test "$(shell whoami)" = "root" || (echo 'This has to be run with sudo or as root, Ex: sudo -E make flash-sdcard SDDEVICE=/dev/sdc' && exit 1)
 	@test -n "$(SDDEVICE)" || (echo 'SDDEVICE must be set, Ex: make flash-sdcard SDDEVICE=/dev/sdc' && exit 1)
-	sgdisk --clear -g --new=1:$(FWPAYLOAD_SECTORSTART):$(FWPAYLOAD_SECTOREND) --new=2:$(UIMAGE_SECTORSTART):0 --typecode=1:3000 --typecode=2:8300 $(SDDEVICE)
+	sgdisk --clear -g --new=1:$(DT_SECTORSTART):$(DT_SECTOREND) --new=2:$(FW_SECTORSTART):$(FW_SECTOREND) --new=3:$(UIMAGE_SECTORSTART):$(UIMAGE_SECTOREND) --new=4:$(ROOT_SECTORSTART):$(ROOT_SECTOREND) --typecode=1:b000 --typecode=2:3000 --typecode=3:8300 --typecode=4:8200 $(SDDEVICE)
 
 # specific recipes
 gcc: $(CC)
@@ -176,6 +180,10 @@ help:
 	@echo "        make images"
 	@echo "    for specific artefact"
 	@echo "        make [vmlinux|uImage|fw_payload.bin]"
+	@echo ""
+	@echo "flash firmware and linux images to sd card"
+	@echo "    has to be run as root or with sudo -E:"
+	@echo "        make flash-sdcard SDDEVICE=/dev/sdX"
 	@echo ""
 	@echo "There are two clean targets:"
 	@echo "    Clean only build object"
