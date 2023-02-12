@@ -5,6 +5,7 @@ ROOT     := $(patsubst %/,%, $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 RISCV    := $(PWD)/install$(XLEN)
 DEST     := $(abspath $(RISCV))
 PATH     := $(DEST)/bin:$(PATH)
+GZIP_BIN ?= gzip
 
 TOOLCHAIN_PREFIX := $(ROOT)/buildroot/output/host/bin/riscv$(XLEN)-buildroot-linux-gnu-
 CC          := $(TOOLCHAIN_PREFIX)gcc
@@ -97,7 +98,7 @@ $(RISCV)/Image: $(RISCV)/vmlinux
 	$(OBJCOPY) -O binary -R .note -R .comment -S $< $@
 
 $(RISCV)/Image.gz: $(RISCV)/Image
-	gzip -9 -k --force $< > $@
+	$(GZIP_BIN) -9 -k --force $< > $@
 
 # U-Boot-compatible Linux image
 $(RISCV)/uImage: $(RISCV)/Image.gz $(MKIMAGE)
