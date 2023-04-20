@@ -107,6 +107,10 @@ $(RISCV)/uImage: $(RISCV)/Image.gz $(MKIMAGE)
 $(RISCV)/u-boot.bin: u-boot/u-boot.bin
 	mkdir -p $(RISCV)
 	cp $< $@
+	# Also bring ELF and build annotated dump into install DIR
+	cp u-boot/u-boot $(RISCV)/
+	$(TOOLCHAIN_PREFIX)objdump -d -S  u-boot/u-boot > $(RISCV)/u-boot.dump
+
 
 $(MKIMAGE) u-boot/u-boot.bin: $(CC)
 	make -C u-boot pulp-platform_cheshire_defconfig
@@ -117,6 +121,8 @@ $(RISCV)/fw_payload.bin: $(RISCV)/u-boot.bin
 	make -C opensbi FW_PAYLOAD_PATH=$< $(sbi-mk)
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf $(RISCV)/fw_payload.elf
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/fw_payload.bin
+	# Also bring in dump
+	$(TOOLCHAIN_PREFIX)objdump -d -S  opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf > $(RISCV)/fw_payload.dump
 
 # OpenSBI for Spike with Linux as payload
 $(RISCV)/spike_fw_payload.elf: PLATFORM=generic
