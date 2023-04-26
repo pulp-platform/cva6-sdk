@@ -6,8 +6,8 @@ Subject: [PATCH] Add OpenTitan QSPI host driver
 ---
  drivers/spi/Kconfig         |   5 +
  drivers/spi/Makefile        |   1 +
- drivers/spi/spi-opentitan.c | 750 ++++++++++++++++++++++++++++++++++++++++++++
- 3 files changed, 756 insertions(+)
+ drivers/spi/spi-opentitan.c | 757 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 763 insertions(+)
  create mode 100644 drivers/spi/spi-opentitan.c
 
 diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
@@ -43,7 +43,7 @@ new file mode 100644
 index 000000000000..6e613f65fdf2
 --- /dev/null
 +++ b/drivers/spi/spi-opentitan.c
-@@ -0,0 +1,750 @@
+@@ -0,0 +1,757 @@
 +#include <linux/io.h>
 +#include <linux/interrupt.h>
 +#include <linux/module.h>
@@ -56,7 +56,9 @@ index 000000000000..6e613f65fdf2
 +#define OPENTITAN_QSPI_DRIVER_NAME		"opentitan_qspi"
 +
 +// Bit 30 in Control: SW Reset
++#define OPENTITAN_QSPI_CONTROL_SPI_EN (1 << 31)
 +#define OPENTITAN_QSPI_CONTROL_SW_RESET (1 << 30)
++#define OPENTITAN_QSPI_CONTROL_OUTPUT_EN (1 << 29)
 +
 +#define OPENTITAN_QSPI_TXFIFO_DEPTH 256
 +#define OPENTITAN_QSPI_RXFIFO_DEPTH 256
@@ -84,9 +86,11 @@ index 000000000000..6e613f65fdf2
 +	REG_STATUS,			/* Status Register */
 +	REG_CONFIGOPTS_0,	/* Configuration Options Register 1 */
 +	REG_CONFIGOPTS_1,   /* Configuration Options Register 2 */
++	REG_CONFIGOPTS_2,   /* Configuration Options Register 3 */
 +	REG_CSID,			/* Chip-Select ID */
 +	REG_COMMAND,		/* Command Register */
-+	REG_DATA,			/* SPI Data Window*/
++	REG_RXDATA,         /* SPI RX Data Window*/
++	REG_TXDATA,         /* SPI TX Data Window*/
 +	REG_ERROR_ENABLE,	/* Controls which classes of error raise an interrupt */
 +	REG_ERROR_STATUS,	/* Indicates that any errors have occured */
 +	REG_EVENT_ENABLE,	/* Controls which classes of SPI events raise an interrupt */
@@ -221,7 +225,7 @@ index 000000000000..6e613f65fdf2
 +                }
 +			}
 +
-+			iowrite32(*((unsigned int *) tmp), priv->regs + REG_DATA);
++			iowrite32(*((unsigned int *) tmp), priv->regs + REG_TXDATA);
 +		}
 +
 +		// Less than a full word left
@@ -246,7 +250,7 @@ index 000000000000..6e613f65fdf2
 +				tmp[3] = 0;
 +			}
 +			
-+			iowrite32(*((unsigned int *) tmp), priv->regs + REG_DATA);
++			iowrite32(*((unsigned int *) tmp), priv->regs + REG_TXDATA);
 +		}
 +	}
 +
@@ -298,7 +302,7 @@ index 000000000000..6e613f65fdf2
 +				if((status >> 8) & 0xFF){
 +					if(bytes_rcvd < num_bytes){
 +						unsigned char *dst = (unsigned char *) din;
-+						unsigned int word = ioread32(priv->regs + REG_DATA);
++						unsigned int word = ioread32(priv->regs + REG_RXDATA);
 +
 +						if((num_bytes - bytes_rcvd) >= 4){
 +							if(!priv->byte_order){
@@ -363,7 +367,7 @@ index 000000000000..6e613f65fdf2
 +
 +					// Somehow we have too much data??
 +					} else {
-+						(void) ioread32(priv->regs + REG_DATA);
++						(void) ioread32(priv->regs + REG_RXDATA);
 +						dev_err(&master->dev, "Device returned more data than we requested. num_bytes = 0x%x, bytes_rcvd = 0x%x, status = 0x%x\n",
 +								num_bytes, bytes_rcvd, status);
 +					}
@@ -386,7 +390,7 @@ index 000000000000..6e613f65fdf2
 +                	return -1;
 +                }
 +        
-+				word = ioread32((volatile unsigned int *) (priv->regs + REG_DATA));
++				word = ioread32((volatile unsigned int *) (priv->regs + REG_RXDATA));
 +
 +				if(!priv->byte_order){
 +					// We are in here so at least one byte remains
@@ -675,7 +679,7 @@ index 000000000000..6e613f65fdf2
 +		priv->max_freq = 400000;	// Default to 400 kHz
 +
 +	// Use first CS by default
-+	priv->unused_cs = 1;
++	priv->unused_cs = 2;
 +    priv->used_cs = 0;
 +
 +	// Read the byte order
@@ -720,6 +724,9 @@ index 000000000000..6e613f65fdf2
 +	// Configure the CS
 +	// De-select the connected peripheral by default
 +	iowrite32(priv->unused_cs, priv->regs + REG_CSID);
++
++	// Enable the SPI and its output
++  	iowrite32(OPENTITAN_QSPI_CONTROL_OUTPUT_EN  | OPENTITAN_QSPI_CONTROL_SPI_EN, priv->regs + REG_CONTROL);
 +
 +	/* Register for SPI event interrupt */
 +	ret = devm_request_irq(&pdev->dev, evt_irq, opentitan_qspi_irq, 0,
