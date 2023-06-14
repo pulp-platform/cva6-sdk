@@ -15,7 +15,7 @@ MKIMAGE     := u-boot/tools/mkimage
 NR_CORES := $(shell nproc)
 
 # SBI options
-PLATFORM := fpga/cheshire
+PLATFORM := generic
 FW_FDT_PATH ?=
 sbi-mk = PLATFORM=$(PLATFORM) CROSS_COMPILE=$(TOOLCHAIN_PREFIX) $(if $(FW_FDT_PATH),FW_FDT_PATH=$(FW_FDT_PATH),)
 ifeq ($(XLEN), 32)
@@ -29,8 +29,8 @@ ifeq ($(XLEN), 32)
 UIMAGE_LOAD_ADDRESS := 0x80400000
 UIMAGE_ENTRY_POINT  := 0x80400000
 else
-UIMAGE_LOAD_ADDRESS := 0x80200000
-UIMAGE_ENTRY_POINT  := 0x80200000
+UIMAGE_LOAD_ADDRESS := 0x83000000
+UIMAGE_ENTRY_POINT  := 0x83000000
 endif
 
 # default configure flags
@@ -98,25 +98,44 @@ $(RISCV)/Image: $(RISCV)/vmlinux
 	$(OBJCOPY) -O binary -R .note -R .comment -S $< $@
 
 $(RISCV)/Image.gz: $(RISCV)/Image
-	$(GZIP_BIN) -9 -k --force $< > $@
+	$(GZIP_BIN) -c $< > $@
 
 # U-Boot-compatible Linux image
 $(RISCV)/uImage: $(RISCV)/Image.gz $(MKIMAGE)
 	$(MKIMAGE) -A riscv -O linux -T kernel -a $(UIMAGE_LOAD_ADDRESS) -e $(UIMAGE_ENTRY_POINT) -C gzip -n "CV$(XLEN)A6Linux" -d $< $@
 
+# Dtb for itb image
+$(RISCV)/occamy.dtb: 
+	@if [ -z $$OCCAMY_DTS ]; then echo "Please set \$${OCCAMY_DTS} with the device tree."; exit 1; fi
+	u-boot/scripts/dtc/dtc -I dts $(OCCAMY_DTS) -o $(RISCV)/occamy.dtb
+	u-boot/scripts/dtc/dtc -I dtb $(RISCV)/occamy.dtb -O dts -o $(RISCV)/occamy.dtb.dump
+
+# Dtb
+$(RISCV)/Image.itb: $(RISCV)/occamy.dtb
+	$(MKIMAGE) -f configs/fit_kernel_dtb.its $@
+
 $(RISCV)/u-boot.bin: u-boot/u-boot.bin
 	mkdir -p $(RISCV)
 	cp $< $@
 
-$(MKIMAGE) u-boot/u-boot.bin: $(CC)
-	make -C u-boot pulp-platform_cheshire_defconfig
-	make -C u-boot CROSS_COMPILE=$(TOOLCHAIN_PREFIX)
+# U-boot with OpenSBI as payload
+$(MKIMAGE) u-boot/u-boot.bin: $(CC) $(RISCV)/fw_dynamic.bin
+	make -C u-boot pulp-platform_occamy_defconfig OPENSBI=$(RISCV)/fw_dynamic.bin
+	make -C u-boot CROSS_COMPILE=$(TOOLCHAIN_PREFIX) OPENSBI=$(RISCV)/fw_dynamic.bin
+	cp u-boot/spl/u-boot-spl.bin $(RISCV)/u-boot-spl.bin
+	cp u-boot/u-boot.itb $(RISCV)/u-boot.itb
 
 # OpenSBI with u-boot as payload
 $(RISCV)/fw_payload.bin: $(RISCV)/u-boot.bin
-	make -C opensbi FW_PAYLOAD_PATH=$< $(sbi-mk)
+	make -C opensbi FW_PAYLOAD_PATH=$< $(sbi-mk) -d
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf $(RISCV)/fw_payload.elf
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/fw_payload.bin
+
+# OpenSBI without payload
+$(RISCV)/fw_dynamic.bin:
+	make -C opensbi $(sbi-mk) FW_DYNAMIC=y
+	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_dynamic.elf $(RISCV)/fw_dynamic.elf
+	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_dynamic.bin $(RISCV)/fw_dynamic.bin
 
 # OpenSBI for Spike with Linux as payload
 $(RISCV)/spike_fw_payload.elf: PLATFORM=generic
@@ -150,14 +169,17 @@ format-sd: $(SDDEVICE)
 gcc: $(CC)
 vmlinux: $(RISCV)/vmlinux
 fw_payload.bin: $(RISCV)/fw_payload.bin
+fw_dynamic.bin: $(RISCV)/fw_dynamic.bin
 uImage: $(RISCV)/uImage
 spike_payload: $(RISCV)/spike_fw_payload.elf
+Image.itb: $(RISCV)/Image.itb
 
-images: $(CC) $(RISCV)/fw_payload.bin $(RISCV)/uImage
+images: $(CC) $(RISCV)/fw_dynamic.bin u-boot/u-boot.bin $(RISCV)/uImage $(RISCV)/Image.itb
+#images: $(CC) u-boot/u-boot.bin $(RISCV)/fw_payload.bin uImage
 
 clean:
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
-	rm -rf $(RISCV)/fw_payload.bin $(RISCV)/uImage $(RISCV)/Image.gz
+	rm -rf $(RISCV)/*
 	make -C u-boot clean
 	make -C opensbi distclean
 
