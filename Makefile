@@ -98,7 +98,7 @@ $(RISCV)/Image: $(RISCV)/vmlinux
 	$(OBJCOPY) -O binary -R .note -R .comment -S $< $@
 
 $(RISCV)/Image.gz: $(RISCV)/Image
-	$(GZIP_BIN) -9 -k --force $< > $@
+	$(GZIP_BIN) -9 --force $< > $@
 
 # U-Boot-compatible Linux image
 $(RISCV)/uImage: $(RISCV)/Image.gz $(MKIMAGE)
