@@ -113,12 +113,12 @@ $(RISCV)/u-boot.bin: u-boot/u-boot.bin
 
 
 $(MKIMAGE) u-boot/u-boot.bin: $(CC)
-	make -C u-boot pulp-platform_cheshire_defconfig
-	make -C u-boot CROSS_COMPILE=$(TOOLCHAIN_PREFIX)
+	make -C u-boot -j16 pulp-platform_cheshire_defconfig
+	make -C u-boot -j16 CROSS_COMPILE=$(TOOLCHAIN_PREFIX)
 
 # OpenSBI with u-boot as payload
 $(RISCV)/fw_payload.bin: $(RISCV)/u-boot.bin
-	make -C opensbi FW_PAYLOAD_PATH=$< $(sbi-mk)
+	make -C opensbi -j16 FW_PAYLOAD_PATH=$< $(sbi-mk)
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf $(RISCV)/fw_payload.elf
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/fw_payload.bin
 	# Also bring in dump
@@ -152,6 +152,11 @@ format-sd: $(SDDEVICE)
 	@test -n "$(SDDEVICE)" || (echo 'SDDEVICE must be set, Ex: make flash-sdcard SDDEVICE=/dev/sdc' && exit 1)
 	sgdisk --clear -g --new=1:$(DT_SECTORSTART):$(DT_SECTOREND) --new=2:$(FW_SECTORSTART):$(FW_SECTOREND) --new=3:$(UIMAGE_SECTORSTART):$(UIMAGE_SECTOREND) --new=4:$(ROOT_SECTORSTART):$(ROOT_SECTOREND) --typecode=1:b000 --typecode=2:3000 --typecode=3:8300 --typecode=4:8200 $(SDDEVICE)
 
+rootfs/root/carfield.ko:
+	make -C buildroot linux
+	make -C sw/drivers/carfield
+	cp sw/drivers/carfield/carfield.ko rootfs/root/carfield.ko
+
 # specific recipes
 gcc: $(CC)
 vmlinux: $(RISCV)/vmlinux
@@ -159,7 +164,7 @@ fw_payload.bin: $(RISCV)/fw_payload.bin
 uImage: $(RISCV)/uImage
 spike_payload: $(RISCV)/spike_fw_payload.elf
 
-images: $(CC) $(RISCV)/fw_payload.bin $(RISCV)/uImage
+images: $(CC) rootfs/root/carfield.ko $(RISCV)/fw_payload.bin $(RISCV)/uImage
 
 clean:
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
