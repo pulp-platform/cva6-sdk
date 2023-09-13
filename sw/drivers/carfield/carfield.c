@@ -1,3 +1,5 @@
+#include <asm/io.h>
+
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/fs.h>
@@ -28,6 +30,10 @@ struct shared_mem {
 // Device private data structure
 struct cardev_private_data {
     struct shared_mem soc_ctrl_mem;
+    struct shared_mem l2_intl_0_mem;
+    struct shared_mem l2_cont_0_mem;
+    struct shared_mem l2_intl_1_mem;
+    struct shared_mem l2_cont_1_mem;
     struct shared_mem safety_island_mem;
     struct shared_mem integer_cluster_mem;
     struct shared_mem spatz_cluster_mem;
@@ -86,24 +92,48 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
 
     switch (vma->vm_pgoff) {
     case 0:
-        strncpy(type, "soc_regs", sizeof(type));
-        pr_info("Ready to map soc_regs\n");
+        strncpy(type, "soc_ctrl", sizeof(type));
+        pr_info("Ready to map soc_ctrl\n");
         mapoffset = cardev_data->soc_ctrl_mem.pbase;
         psize = cardev_data->soc_ctrl_mem.size;
         break;
-    case 1:
+    case 10:
+        strncpy(type, "l2_intl_0", sizeof(type));
+        pr_info("Ready to map l2_intl_0\n");
+        mapoffset = cardev_data->l2_intl_0_mem.pbase;
+        psize = cardev_data->l2_intl_0_mem.size;
+        break;
+    case 11:
+        strncpy(type, "l2_cont_0", sizeof(type));
+        pr_info("Ready to map l2_cont_0\n");
+        mapoffset = cardev_data->l2_cont_0_mem.pbase;
+        psize = cardev_data->l2_cont_0_mem.size;
+        break;
+    case 12:
+        strncpy(type, "l2_intl_1", sizeof(type));
+        pr_info("Ready to map l2_intl_1\n");
+        mapoffset = cardev_data->l2_intl_1_mem.pbase;
+        psize = cardev_data->l2_intl_1_mem.size;
+        break;
+    case 13:
+        strncpy(type, "l2_cont_1", sizeof(type));
+        pr_info("Ready to map l2_cont_1\n");
+        mapoffset = cardev_data->l2_cont_1_mem.pbase;
+        psize = cardev_data->l2_cont_1_mem.size;
+        break;
+    case 100:
         strncpy(type, "safety_island", sizeof(type));
         pr_info("Ready to map safety_island\n");
         mapoffset = cardev_data->safety_island_mem.pbase;
         psize = cardev_data->safety_island_mem.size;
         break;
-    case 2:
+    case 200:
         strncpy(type, "integer_cluster", sizeof(type));
         pr_info("Ready to map safety_island\n");
         mapoffset = cardev_data->integer_cluster_mem.pbase;
         psize = cardev_data->integer_cluster_mem.size;
         break;
-    case 3:
+    case 300:
         strncpy(type, "spatz_cluster", sizeof(type));
         pr_info("Ready to map spatz_cluster\n");
         mapoffset = cardev_data->spatz_cluster_mem.pbase;
@@ -136,6 +166,41 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
         pr_info("mmap error: %d\n", ret);
 
     return ret;
+}
+
+struct card_alloc_arg {
+    size_t size;
+    uint64_t result_phys_addr;
+    uint64_t result_virt_addr;
+};
+
+static long card_ioctl(struct file *file, unsigned int cmd,
+                         unsigned long arg) {
+    void __user *argp = (void __user *)arg;
+    int __user *p = argp;
+
+    // check correct magic
+    // if (_IOC_TYPE(cmd) != SNIOC_MAGIC)
+    //   return -ENOTTY;
+
+    switch (cmd) {
+    // Alloc physically contiguous memory
+    case 0x1: {
+        struct card_alloc_arg arg;
+        phys_addr_t result_phy = 0;
+        if (copy_from_user(&arg, p, sizeof(struct card_alloc_arg)))
+            return -EFAULT;
+        arg.result_virt_addr = kmalloc(arg.size, GFP_ATOMIC);
+        if (arg.result_virt_addr < 0) {
+            return arg.result_virt_addr;
+        }
+        arg.result_phys_addr = virt_to_phys(arg.result_virt_addr);
+        copy_to_user(p, &arg, sizeof(struct card_alloc_arg));
+
+        return arg.result_virt_addr;
+    }
+    }
+    return 0;
 }
 
 ssize_t card_read(struct file *filp, char __user *buff, size_t count,
@@ -187,6 +252,7 @@ struct file_operations card_fops = { .open = card_open,
                                      .release = card_release,
                                      .read = card_read,
                                      .mmap = card_mmap,
+                                     .unlocked_ioctl = card_ioctl,
                                      .owner = THIS_MODULE };
 
 // gets called when the device is removed from the system
@@ -206,12 +272,45 @@ int card_platform_driver_remove(struct platform_device *pdev) {
     return 0;
 }
 
+int probe_node(struct platform_device *pdev,
+               struct cardev_private_data *dev_data, struct shared_mem *result,
+               const char *name) {
+    struct device_node *tmp_np;
+    struct resource tmp_res;
+    // Get the node in the DTS
+    tmp_np = of_get_child_by_name(pdev->dev.of_node, name);
+    if (tmp_np) {
+        // Get addresses, remap them and save them to the struct shared_mem
+        of_address_to_resource(tmp_np, 0, &tmp_res);
+        result->vbase = devm_ioremap_resource(&pdev->dev, &tmp_res);
+        if (IS_ERR(result->vbase)) {
+            pr_err("Could not map %s io-region\n", name);
+        } else {
+            result->pbase = tmp_res.start;
+            result->size = resource_size(&tmp_res);
+            pr_debug("Allocated %s io-region\n", name);
+            // Try to access the memory region
+            pr_debug("Probing %s : %x\n");
+            if (*((uint32_t *)result->vbase) == 0xbadcab1e) {
+                pr_warn("%s not found in hardware (0xbadcab1e)!\n", name);
+                *result = (struct shared_mem) { 0 };
+            }
+            // Save the informations in the char device (for card_read)
+            dev_data->buffer_size += sprintf(
+                dev_data->buffer + dev_data->buffer_size, "%s: %px size = %x\n",
+                name, result->pbase, result->size);
+        }
+        return 0;
+    } else {
+        pr_err("No %s in device tree\n", name);
+    }
+    *result = (struct shared_mem) { 0 };
+    return 1;
+}
+
 // gets called when matched platform device
 int card_platform_driver_probe(struct platform_device *pdev) {
     int ret;
-    struct device_node *tmp_np, *tmp_np2;
-    struct resource soc_ctrl_res, safety_island_res, integer_cluster_res,
-        spatz_cluster_res;
     struct cardev_private_data *dev_data;
 
     pr_info("A device is detected \n");
@@ -251,114 +350,23 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     dev_data->cdev.owner = THIS_MODULE;
 
     // Probe soc_ctrl
-    tmp_np = of_get_child_by_name(pdev->dev.of_node, "soc-ctrl");
-    if (tmp_np) {
-        ret = of_address_to_resource(tmp_np, 0, &soc_ctrl_res);
-        dev_data->soc_ctrl_mem.vbase =
-            devm_ioremap_resource(&pdev->dev, &soc_ctrl_res);
-        if (IS_ERR(dev_data->soc_ctrl_mem.vbase)) {
-            pr_info("Could not map soc-ctrl io-region\n");
-        } else {
-            dev_data->soc_ctrl_mem.pbase = soc_ctrl_res.start;
-            dev_data->soc_ctrl_mem.size = resource_size(&soc_ctrl_res);
-            pr_info("Allocated soc-ctrl io-region\n");
-        }
-        dev_data->buffer_size +=
-            sprintf(dev_data->buffer + dev_data->buffer_size,
-                    "soc_ctrl: %px size = %x\n", dev_data->soc_ctrl_mem.pbase,
-                    dev_data->soc_ctrl_mem.size);
-    } else {
-        dev_data->soc_ctrl_mem = (struct shared_mem) { 0 };
-        pr_info("No soc_ctrl in device tree\n");
-    }
+    probe_node(pdev, dev_data, &dev_data->soc_ctrl_mem, "soc-ctrl");
 
     // Probe safety_island
-    tmp_np = of_get_child_by_name(pdev->dev.of_node, "safety-island");
-    if (tmp_np) {
-        ret = of_address_to_resource(tmp_np, 0, &safety_island_res);
-        dev_data->safety_island_mem.vbase =
-            devm_ioremap_resource(&pdev->dev, &safety_island_res);
-        if (IS_ERR(dev_data->safety_island_mem.vbase)) {
-            pr_info("Could not map safety-island io-region\n");
-        } else {
-            dev_data->safety_island_mem.pbase = safety_island_res.start;
-            dev_data->safety_island_mem.size =
-                resource_size(&safety_island_res);
-            pr_info("Allocated safety-island io-region\n");
-        }
-        pr_info("Probing safety island : %x",
-                *((uint32_t *)dev_data->safety_island_mem.vbase));
-        if (*((uint32_t *)dev_data->safety_island_mem.vbase) == 0xbadcab1e) {
-            pr_info("Not found !\n");
-            dev_data->safety_island_mem = (struct shared_mem) { 0 };
-        }
-        dev_data->buffer_size += sprintf(
-            dev_data->buffer + dev_data->buffer_size,
-            "safety_island: %px size = %x\n", dev_data->safety_island_mem.pbase,
-            dev_data->safety_island_mem.size);
-    } else {
-        dev_data->safety_island_mem = (struct shared_mem) { 0 };
-        pr_info("No safety_island in device tree\n");
-    }
+    probe_node(pdev, dev_data, &dev_data->safety_island_mem, "safety-island");
 
     // Probe integer_cluster
-    tmp_np = of_get_child_by_name(pdev->dev.of_node, "integer-cluster");
-    if (tmp_np) {
-        ret = of_address_to_resource(tmp_np, 0, &integer_cluster_res);
-        dev_data->integer_cluster_mem.vbase =
-            devm_ioremap_resource(&pdev->dev, &integer_cluster_res);
-        if (IS_ERR(dev_data->integer_cluster_mem.vbase)) {
-            pr_info("Could not map integer-cluster io-region\n");
-        } else {
-            dev_data->integer_cluster_mem.pbase = integer_cluster_res.start;
-            dev_data->integer_cluster_mem.size =
-                resource_size(&integer_cluster_res);
-            pr_info("Allocated integer-cluster io-region\n");
-        }
-        pr_info("Probing integer-cluster : %x",
-                *((uint32_t *)(dev_data->integer_cluster_mem.vbase)));
-        if (*((uint32_t *)dev_data->integer_cluster_mem.vbase) == 0xbadcab1e) {
-            pr_info("Not found !\n");
-            dev_data->integer_cluster_mem = (struct shared_mem) { 0 };
-        }
-        dev_data->buffer_size +=
-            sprintf(dev_data->buffer + dev_data->buffer_size,
-                    "integer_cluster: %px size = %x\n",
-                    dev_data->integer_cluster_mem.pbase,
-                    dev_data->integer_cluster_mem.size);
-    } else {
-        dev_data->integer_cluster_mem = (struct shared_mem) { 0 };
-        pr_info("No integer_cluster in device tree\n");
-    }
+    probe_node(pdev, dev_data, &dev_data->integer_cluster_mem,
+               "integer-cluster");
 
     // Probe spatz_cluster
-    tmp_np = of_get_child_by_name(pdev->dev.of_node, "spatz-cluster");
-    if (tmp_np) {
-        ret = of_address_to_resource(tmp_np, 0, &spatz_cluster_res);
-        dev_data->spatz_cluster_mem.vbase =
-            devm_ioremap_resource(&pdev->dev, &spatz_cluster_res);
-        if (IS_ERR(dev_data->spatz_cluster_mem.vbase)) {
-            pr_info("Could not map spatz-cluster io-region\n");
-        } else {
-            dev_data->spatz_cluster_mem.pbase = spatz_cluster_res.start;
-            dev_data->spatz_cluster_mem.size =
-                resource_size(&spatz_cluster_res);
-            pr_info("Allocated spatz-cluster io-region\n");
-        }
-        pr_info("Probing spatz-cluster : %x",
-                *((uint32_t *)(dev_data->spatz_cluster_mem.vbase)));
-        if (*((uint32_t *)dev_data->spatz_cluster_mem.vbase) == 0xbadcab1e) {
-            pr_info("Not found !\n");
-            dev_data->spatz_cluster_mem = (struct shared_mem) { 0 };
-        }
-        dev_data->buffer_size += sprintf(
-            dev_data->buffer + dev_data->buffer_size,
-            "spatz_cluster: %px size = %x\n", dev_data->spatz_cluster_mem.pbase,
-            dev_data->spatz_cluster_mem.size);
-    } else {
-        dev_data->spatz_cluster_mem = (struct shared_mem) { 0 };
-        pr_info("No spatz_cluster in device tree\n");
-    }
+    probe_node(pdev, dev_data, &dev_data->spatz_cluster_mem, "spatz-cluster");
+
+    // Probe L2
+    probe_node(pdev, dev_data, &dev_data->l2_intl_0_mem, "l2-intl-0");
+    probe_node(pdev, dev_data, &dev_data->l2_cont_0_mem, "l2-cont-0");
+    probe_node(pdev, dev_data, &dev_data->l2_intl_1_mem, "l2-intl-1");
+    probe_node(pdev, dev_data, &dev_data->l2_cont_1_mem, "l2-cont-1");
 
     ret = cdev_add(&dev_data->cdev, dev_data->dev_num, 1);
     if (ret < 0) {
