@@ -152,6 +152,7 @@ format-sd: $(SDDEVICE)
 	@test -n "$(SDDEVICE)" || (echo 'SDDEVICE must be set, Ex: make flash-sdcard SDDEVICE=/dev/sdc' && exit 1)
 	sgdisk --clear -g --new=1:$(DT_SECTORSTART):$(DT_SECTOREND) --new=2:$(FW_SECTORSTART):$(FW_SECTOREND) --new=3:$(UIMAGE_SECTORSTART):$(UIMAGE_SECTOREND) --new=4:$(ROOT_SECTORSTART):$(ROOT_SECTOREND) --typecode=1:b000 --typecode=2:3000 --typecode=3:8300 --typecode=4:8200 $(SDDEVICE)
 
+# Drivers and applications
 rootfs/root/carfield.ko:
 	make -C buildroot linux
 	make -C sw/drivers/carfield
@@ -167,6 +168,7 @@ spike_payload: $(RISCV)/spike_fw_payload.elf
 images: $(CC) rootfs/root/carfield.ko $(RISCV)/fw_payload.bin $(RISCV)/uImage
 
 clean:
+	rm rootfs/root/*.ko
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
 	rm -rf $(RISCV)/fw_payload.bin $(RISCV)/uImage $(RISCV)/Image.gz
 	make -C u-boot clean
