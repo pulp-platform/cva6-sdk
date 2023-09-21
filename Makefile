@@ -168,11 +168,12 @@ spike_payload: $(RISCV)/spike_fw_payload.elf
 images: $(CC) rootfs/root/carfield.ko $(RISCV)/fw_payload.bin $(RISCV)/uImage
 
 clean:
-	rm rootfs/root/*.ko
+	rm -f rootfs/root/*.ko rootfs/root/tests/*.app
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
 	rm -rf $(RISCV)/fw_payload.bin $(RISCV)/uImage $(RISCV)/Image.gz
 	make -C u-boot clean
 	make -C opensbi distclean
+	make -C sw/drivers/carfield clean
 
 clean-all: clean
 	rm -rf $(RISCV) riscv-isa-sim/build riscv-tests/build

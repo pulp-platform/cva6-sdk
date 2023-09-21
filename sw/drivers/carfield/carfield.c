@@ -53,6 +53,9 @@ struct cardrv_private_data {
 
 struct cardrv_private_data cardrv_data;
 
+#define ISOLATE_BEGIN_OFFSET 15*4
+#define ISOLATE_END_OFFSET 20*4
+
 #define RDWR 0x11
 #define RDONLY 0x01
 #define WRONLY 0x10
@@ -288,9 +291,9 @@ int probe_node(struct platform_device *pdev,
         } else {
             result->pbase = tmp_res.start;
             result->size = resource_size(&tmp_res);
-            pr_debug("Allocated %s io-region\n", name);
+            pr_info("Allocated %s io-region\n", name);
             // Try to access the memory region
-            pr_debug("Probing %s : %x\n");
+            pr_info("Probing %s : %x\n", name, *((uint32_t *)result->vbase));
             if (*((uint32_t *)result->vbase) == 0xbadcab1e) {
                 pr_warn("%s not found in hardware (0xbadcab1e)!\n", name);
                 *result = (struct shared_mem) { 0 };
@@ -310,7 +313,7 @@ int probe_node(struct platform_device *pdev,
 
 // gets called when matched platform device
 int card_platform_driver_probe(struct platform_device *pdev) {
-    int ret;
+    int ret, i;
     struct cardev_private_data *dev_data;
 
     pr_info("A device is detected \n");
@@ -351,6 +354,10 @@ int card_platform_driver_probe(struct platform_device *pdev) {
 
     // Probe soc_ctrl
     probe_node(pdev, dev_data, &dev_data->soc_ctrl_mem, "soc-ctrl");
+
+    // Deisolate all
+    for (i = ISOLATE_BEGIN_OFFSET; i < ISOLATE_END_OFFSET; i+=4)
+        *((uint32_t*)(dev_data->soc_ctrl_mem.vbase + i)) = (uint32_t) 0x0;
 
     // Probe safety_island
     probe_node(pdev, dev_data, &dev_data->safety_island_mem, "safety-island");
