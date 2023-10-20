@@ -2,6 +2,9 @@ install*
 build
 *.elf
 rootfs/tetris
+rootfs/**/*.ko
+roots/**/*.so
+rootfs/usr/lib
 
 riscv-gnu-toolchain/build
 riscv-fesvr/build
