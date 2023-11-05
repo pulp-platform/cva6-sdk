@@ -12,6 +12,10 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/of_irq.h>
+# include <linux/interrupt.h>
+# include <linux/irq.h>
+# include <linux/irqdesc.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pulp Platform");
@@ -30,6 +34,7 @@ struct shared_mem {
 // Device private data structure
 struct cardev_private_data {
     struct shared_mem soc_ctrl_mem;
+    struct shared_mem gpio_mem;
     struct shared_mem l2_intl_0_mem;
     struct shared_mem l2_cont_0_mem;
     struct shared_mem l2_intl_1_mem;
@@ -55,6 +60,8 @@ struct cardrv_private_data cardrv_data;
 
 #define ISOLATE_BEGIN_OFFSET 15*4
 #define ISOLATE_END_OFFSET 20*4
+#define CARFIELD_GPIO_N_IRQS 4
+#define CARFIELD_GPIO_FIRST_IRQ 19
 
 #define RDWR 0x11
 #define RDONLY 0x01
@@ -275,6 +282,33 @@ int card_platform_driver_remove(struct platform_device *pdev) {
     return 0;
 }
 
+// Handle GPIO interrupts to clear the GPIO register
+// (Note: other drivers, as ethernet, might handle the same irq)
+int already_entered[64];
+static irqreturn_t carfield_handle_irq(int irq, void *_pdev)
+{
+    //printk("carfield_handle_irq %i\n", irq);
+	struct platform_device *pdev = _pdev;
+	unsigned int pending;
+    struct cardev_private_data *dev_data = dev_get_drvdata(&pdev->dev);
+    struct irq_desc *desc = irq_data_to_desc(irq_get_irq_data(irq));
+    uint32_t old;
+    if(!already_entered[irq]) {
+        already_entered[irq] = 1;
+        return IRQ_NONE;
+    }
+    if (!desc) {
+        pr_err("Could not get hw irq for %i\n", irq);
+    }
+    int hw_irq = desc->irq_data.hwirq;
+    old = ioread32(dev_data->gpio_mem.vbase + 0x00);
+    iowrite32(BIT(hw_irq-CARFIELD_GPIO_FIRST_IRQ), dev_data->gpio_mem.vbase + 0x00);
+    //printk("Hw = %i, wrote = %x, old = %x , new : %x\n", hw_irq, BIT(hw_irq-CARFIELD_GPIO_FIRST_IRQ), old, ioread32(dev_data->gpio_mem.vbase + 0x00));
+
+    already_entered[irq] = 0;
+    return IRQ_HANDLED;
+}
+
 int probe_node(struct platform_device *pdev,
                struct cardev_private_data *dev_data, struct shared_mem *result,
                const char *name) {
@@ -313,7 +347,7 @@ int probe_node(struct platform_device *pdev,
 
 // gets called when matched platform device
 int card_platform_driver_probe(struct platform_device *pdev) {
-    int ret, i;
+    int ret, irq, i;
     struct cardev_private_data *dev_data;
 
     pr_info("A device is detected \n");
@@ -354,6 +388,23 @@ int card_platform_driver_probe(struct platform_device *pdev) {
 
     // Probe soc_ctrl
     probe_node(pdev, dev_data, &dev_data->soc_ctrl_mem, "soc-ctrl");
+
+    // Probe gpio and activate rising edge interrupts
+    probe_node(pdev, dev_data, &dev_data->gpio_mem, "gpio");
+    *((uint32_t*)(dev_data->gpio_mem.vbase + 0x04)) = (uint32_t) 0xffffffff;
+    //*((uint32_t*)(dev_data->gpio_mem.vbase + 0x2C)) = (uint32_t) 0xffffffff;
+    *((uint32_t*)(dev_data->gpio_mem.vbase + 0x34)) = (uint32_t) 0xffffffff;
+
+    // Request gpio irqs
+    for (i = 0; i < CARFIELD_GPIO_N_IRQS; i++) {
+        irq = of_irq_get(of_get_child_by_name(pdev->dev.of_node, "gpio"), i);
+        if(irq < 0)
+            pr_err("Gpio irq %i not found in device tree\n", i);
+        ret = request_irq(irq, carfield_handle_irq, IRQF_SHARED, pdev->name, pdev);
+        if (ret)
+            pr_err("Request gpio irq %i failed with: %i\n", i, ret);
+        //printk("Gpio irq %i registers\n", irq);
+    }
 
     // Deisolate all
     for (i = ISOLATE_BEGIN_OFFSET; i < ISOLATE_END_OFFSET; i+=4)
