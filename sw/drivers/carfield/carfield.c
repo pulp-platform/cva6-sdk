@@ -13,9 +13,9 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/of_irq.h>
-# include <linux/interrupt.h>
-# include <linux/irq.h>
-# include <linux/irqdesc.h>
+#include <linux/interrupt.h>
+#include <linux/irq.h>
+#include <linux/irqdesc.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pulp Platform");
@@ -31,9 +31,15 @@ struct shared_mem {
     resource_size_t size;
 };
 
+struct k_list {
+    struct list_head list;
+    struct shared_mem *data;
+};
+
 // Device private data structure
 struct cardev_private_data {
     struct shared_mem soc_ctrl_mem;
+    struct shared_mem ctrl_regs_mem;
     struct shared_mem gpio_mem;
     struct shared_mem l2_intl_0_mem;
     struct shared_mem l2_cont_0_mem;
@@ -42,6 +48,7 @@ struct cardev_private_data {
     struct shared_mem safety_island_mem;
     struct shared_mem integer_cluster_mem;
     struct shared_mem spatz_cluster_mem;
+    struct list_head test_head;
     char *buffer;
     unsigned int buffer_size;
     dev_t dev_num;
@@ -58,8 +65,8 @@ struct cardrv_private_data {
 
 struct cardrv_private_data cardrv_data;
 
-#define ISOLATE_BEGIN_OFFSET 15*4
-#define ISOLATE_END_OFFSET 20*4
+#define ISOLATE_BEGIN_OFFSET 15 * 4
+#define ISOLATE_END_OFFSET 20 * 4
 #define CARFIELD_GPIO_N_IRQS 4
 #define CARFIELD_GPIO_FIRST_IRQ 19
 
@@ -106,6 +113,19 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
         pr_info("Ready to map soc_ctrl\n");
         mapoffset = cardev_data->soc_ctrl_mem.pbase;
         psize = cardev_data->soc_ctrl_mem.size;
+        break;
+    case 1:
+        strncpy(type, "buffer", sizeof(type));
+        pr_info("Ready to map latest buffer\n");
+        struct k_list* tail = list_last_entry(&cardev_data->test_head, struct k_list, list);
+        mapoffset = tail->data->pbase;
+        psize = tail->data->size;
+        break;
+    case 5:
+        strncpy(type, "ctrl_regs", sizeof(type));
+        pr_info("Ready to map ctrl_regs\n");
+        mapoffset = cardev_data->ctrl_regs_mem.pbase;
+        psize = cardev_data->ctrl_regs_mem.size;
         break;
     case 10:
         strncpy(type, "l2_intl_0", sizeof(type));
@@ -156,10 +176,10 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
 
     vsize = vma->vm_end - vma->vm_start;
     if (vsize > psize) {
-        pr_info("error: vsize %ld > psize %ld\n", vsize, psize);
-        pr_info("  vma->vm_end %lx vma->vm_start %lx\n", vma->vm_end,
+        pr_err("error: vsize %ld > psize %ld\n", vsize, psize);
+        pr_err("  vma->vm_end %lx vma->vm_start %lx\n", vma->vm_end,
                 vma->vm_start);
-        return -EINVAL;
+        // return -EINVAL;
     }
 
     // set protection flags to avoid caching and paging
@@ -184,10 +204,11 @@ struct card_alloc_arg {
     uint64_t result_virt_addr;
 };
 
-static long card_ioctl(struct file *file, unsigned int cmd,
-                         unsigned long arg) {
+static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     void __user *argp = (void __user *)arg;
     int __user *p = argp;
+    struct cardev_private_data *cardev_data =
+        (struct cardev_private_data *)file->private_data;
 
     // check correct magic
     // if (_IOC_TYPE(cmd) != SNIOC_MAGIC)
@@ -205,6 +226,15 @@ static long card_ioctl(struct file *file, unsigned int cmd,
             return arg.result_virt_addr;
         }
         arg.result_phys_addr = virt_to_phys(arg.result_virt_addr);
+
+        // Add to the buffer list
+        struct k_list *new = kmalloc(sizeof(struct k_list), GFP_KERNEL);
+        new->data = kmalloc(sizeof(struct shared_mem), GFP_KERNEL);
+        new->data->pbase = arg.result_phys_addr;
+        new->data->vbase = arg.result_virt_addr;
+        new->data->size = arg.size;
+        list_add_tail(&new->list, &cardev_data->test_head);
+
         copy_to_user(p, &arg, sizeof(struct card_alloc_arg));
 
         return arg.result_virt_addr;
@@ -285,15 +315,14 @@ int card_platform_driver_remove(struct platform_device *pdev) {
 // Handle GPIO interrupts to clear the GPIO register
 // (Note: other drivers, as ethernet, might handle the same irq)
 int already_entered[64];
-static irqreturn_t carfield_handle_irq(int irq, void *_pdev)
-{
-    //printk("carfield_handle_irq %i\n", irq);
-	struct platform_device *pdev = _pdev;
-	unsigned int pending;
+static irqreturn_t carfield_handle_irq(int irq, void *_pdev) {
+    // printk("carfield_handle_irq %i\n", irq);
+    struct platform_device *pdev = _pdev;
+    unsigned int pending;
     struct cardev_private_data *dev_data = dev_get_drvdata(&pdev->dev);
     struct irq_desc *desc = irq_data_to_desc(irq_get_irq_data(irq));
     uint32_t old;
-    if(!already_entered[irq]) {
+    if (!already_entered[irq]) {
         already_entered[irq] = 1;
         return IRQ_NONE;
     }
@@ -302,8 +331,11 @@ static irqreturn_t carfield_handle_irq(int irq, void *_pdev)
     }
     int hw_irq = desc->irq_data.hwirq;
     old = ioread32(dev_data->gpio_mem.vbase + 0x00);
-    iowrite32(BIT(hw_irq-CARFIELD_GPIO_FIRST_IRQ), dev_data->gpio_mem.vbase + 0x00);
-    //printk("Hw = %i, wrote = %x, old = %x , new : %x\n", hw_irq, BIT(hw_irq-CARFIELD_GPIO_FIRST_IRQ), old, ioread32(dev_data->gpio_mem.vbase + 0x00));
+    iowrite32(BIT(hw_irq - CARFIELD_GPIO_FIRST_IRQ),
+              dev_data->gpio_mem.vbase + 0x00);
+    // printk("Hw = %i, wrote = %x, old = %x , new : %x\n", hw_irq,
+    // BIT(hw_irq-CARFIELD_GPIO_FIRST_IRQ), old,
+    // ioread32(dev_data->gpio_mem.vbase + 0x00));
 
     already_entered[irq] = 0;
     return IRQ_HANDLED;
@@ -389,26 +421,29 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     // Probe soc_ctrl
     probe_node(pdev, dev_data, &dev_data->soc_ctrl_mem, "soc-ctrl");
 
+    // Probe scratch registers
+    probe_node(pdev, dev_data, &dev_data->ctrl_regs_mem, "ctrl-regs");
+
     // Probe gpio and activate rising edge interrupts
     probe_node(pdev, dev_data, &dev_data->gpio_mem, "gpio");
-    *((uint32_t*)(dev_data->gpio_mem.vbase + 0x04)) = (uint32_t) 0xffffffff;
+    *((uint32_t *)(dev_data->gpio_mem.vbase + 0x04)) = (uint32_t)0xffffffff;
     //*((uint32_t*)(dev_data->gpio_mem.vbase + 0x2C)) = (uint32_t) 0xffffffff;
-    *((uint32_t*)(dev_data->gpio_mem.vbase + 0x34)) = (uint32_t) 0xffffffff;
+    *((uint32_t *)(dev_data->gpio_mem.vbase + 0x34)) = (uint32_t)0xffffffff;
 
     // Request gpio irqs
     for (i = 0; i < CARFIELD_GPIO_N_IRQS; i++) {
         irq = of_irq_get(of_get_child_by_name(pdev->dev.of_node, "gpio"), i);
-        if(irq < 0)
+        if (irq < 0)
             pr_err("Gpio irq %i not found in device tree\n", i);
-        ret = request_irq(irq, carfield_handle_irq, IRQF_SHARED, pdev->name, pdev);
+        ret = request_irq(irq, carfield_handle_irq, IRQF_SHARED, pdev->name,
+                          pdev);
         if (ret)
             pr_err("Request gpio irq %i failed with: %i\n", i, ret);
-        //printk("Gpio irq %i registers\n", irq);
     }
 
     // Deisolate all
-    for (i = ISOLATE_BEGIN_OFFSET; i < ISOLATE_END_OFFSET; i+=4)
-        *((uint32_t*)(dev_data->soc_ctrl_mem.vbase + i)) = (uint32_t) 0x0;
+    for (i = ISOLATE_BEGIN_OFFSET; i < ISOLATE_END_OFFSET; i += 4)
+        *((uint32_t *)(dev_data->soc_ctrl_mem.vbase + i)) = (uint32_t)0x0;
 
     // Probe safety_island
     probe_node(pdev, dev_data, &dev_data->safety_island_mem, "safety-island");
@@ -425,6 +460,9 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     probe_node(pdev, dev_data, &dev_data->l2_cont_0_mem, "l2-cont-0");
     probe_node(pdev, dev_data, &dev_data->l2_intl_1_mem, "l2-intl-1");
     probe_node(pdev, dev_data, &dev_data->l2_cont_1_mem, "l2-cont-1");
+
+    // Buffer list
+    INIT_LIST_HEAD(&dev_data->test_head);
 
     ret = cdev_add(&dev_data->cdev, dev_data->dev_num, 1);
     if (ret < 0) {
