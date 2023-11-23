@@ -2,7 +2,7 @@
 
 XLEN     := 64
 ROOT     := $(patsubst %/,%, $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-RISCV    := $(PWD)/install$(XLEN)
+RISCV    := $(ROOT)/install$(XLEN)
 DEST     := $(abspath $(RISCV))
 PATH     := $(DEST)/bin:$(PATH)
 GZIP_BIN ?= gzip
@@ -75,7 +75,7 @@ tests: install-dir $(CC)
 
 $(CC): $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig)
 	make -C buildroot defconfig BR2_DEFCONFIG=../$(buildroot_defconfig)
-	make -C buildroot host-gcc-final $(buildroot-mk)
+	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk) 
 
 all: $(CC) isa-sim
 
