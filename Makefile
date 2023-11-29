@@ -2,7 +2,7 @@
 
 XLEN     := 64
 ROOT     := $(patsubst %/,%, $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-RISCV    := $(PWD)/install$(XLEN)
+RISCV    := $(ROOT)/install$(XLEN)
 DEST     := $(abspath $(RISCV))
 PATH     := $(DEST)/bin:$(PATH)
 GZIP_BIN ?= gzip
