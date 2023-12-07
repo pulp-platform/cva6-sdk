@@ -20,6 +20,7 @@ endif
 ARCH          := riscv
 
 obj-m := occamy.o
+occamy-objs := occamy_driver.o occamy_fops.o
 
 all: modules
 build: modules
