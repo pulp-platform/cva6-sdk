@@ -13,9 +13,13 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/of_irq.h>
+#include <linux/of_reserved_mem.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/irqdesc.h>
+#include <linux/dma-mapping.h>
+#include <linux/dmapool.h>
+#include <linux/string.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pulp Platform");
@@ -38,6 +42,8 @@ struct k_list {
 
 // Device private data structure
 struct cardev_private_data {
+    struct platform_device *pdev;
+    struct shared_mem idma_mem;
     struct shared_mem soc_ctrl_mem;
     struct shared_mem ctrl_regs_mem;
     struct shared_mem gpio_mem;
@@ -48,7 +54,12 @@ struct cardev_private_data {
     struct shared_mem safety_island_mem;
     struct shared_mem integer_cluster_mem;
     struct shared_mem spatz_cluster_mem;
+    struct shared_mem l3_mem;
+    // Not accessible from the host (> 4GB)
+    uintptr_t pcie_axi_bar_mem;
+    // DMA buffer list
     struct list_head test_head;
+    // Char device
     char *buffer;
     unsigned int buffer_size;
     dev_t dev_num;
@@ -118,9 +129,16 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
         strncpy(type, "buffer", sizeof(type));
         pr_info("Ready to map latest buffer\n");
         struct k_list* tail = list_last_entry(&cardev_data->test_head, struct k_list, list);
+        pr_info("dma_addr: %llx\n", tail->data->pbase);
         mapoffset = tail->data->pbase;
         psize = tail->data->size;
         break;
+    //case 2:
+    //    strncpy(type, "pcie_axi_bar_mem", sizeof(type));
+    //    pr_info("Ready to map pcie_axi_bar_mem\n");
+    //    mapoffset = cardev_data->pcie_axi_bar_mem.pbase;
+    //    psize = cardev_data->pcie_axi_bar_mem.size;
+    //    break;
     case 5:
         strncpy(type, "ctrl_regs", sizeof(type));
         pr_info("Ready to map ctrl_regs\n");
@@ -151,6 +169,12 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
         mapoffset = cardev_data->l2_cont_1_mem.pbase;
         psize = cardev_data->l2_cont_1_mem.size;
         break;
+    case 20:
+        strncpy(type, "idma", sizeof(type));
+        pr_info("Ready to map idma\n");
+        mapoffset = cardev_data->idma_mem.pbase;
+        psize = cardev_data->idma_mem.size;
+        break;
     case 100:
         strncpy(type, "safety_island", sizeof(type));
         pr_info("Ready to map safety_island\n");
@@ -176,10 +200,10 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
 
     vsize = vma->vm_end - vma->vm_start;
     if (vsize > psize) {
-        pr_err("error: vsize %ld > psize %ld\n", vsize, psize);
+        pr_err("error: vsize %ld > psize %lx\n", vsize, psize);
         pr_err("  vma->vm_end %lx vma->vm_start %lx\n", vma->vm_end,
                 vma->vm_start);
-        // return -EINVAL;
+        return -EINVAL;
     }
 
     // set protection flags to avoid caching and paging
@@ -210,6 +234,8 @@ static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     struct cardev_private_data *cardev_data =
         (struct cardev_private_data *)file->private_data;
 
+    pr_info("ioctl received\n");
+
     // check correct magic
     // if (_IOC_TYPE(cmd) != SNIOC_MAGIC)
     //   return -ENOTTY;
@@ -217,15 +243,24 @@ static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
     switch (cmd) {
     // Alloc physically contiguous memory
     case 0x1: {
+        // Get user arguments
         struct card_alloc_arg arg;
-        phys_addr_t result_phy = 0;
+        void *result_virt = 0;
+        dma_addr_t result_dma = 0;
         if (copy_from_user(&arg, p, sizeof(struct card_alloc_arg)))
             return -EFAULT;
-        arg.result_virt_addr = kmalloc(arg.size, GFP_ATOMIC);
-        if (arg.result_virt_addr < 0) {
-            return arg.result_virt_addr;
-        }
-        arg.result_phys_addr = virt_to_phys(arg.result_virt_addr);
+
+        // Alloc memory region
+        arg.result_virt_addr = dma_alloc_coherent(&cardev_data->pdev->dev, arg.size, &arg.result_phys_addr, GFP_KERNEL);
+
+        if (!arg.result_virt_addr)
+            return -ENOMEM;
+        
+        // Offset if there is a PCIe endpoint in the device
+        if (cardev_data->pcie_axi_bar_mem)
+            arg.result_phys_addr += cardev_data->pcie_axi_bar_mem;
+
+        pr_info("offset:%llx, phys(dma):%llx, virt:%llx, size:%llx\n", cardev_data->pcie_axi_bar_mem, arg.result_phys_addr, arg.result_virt_addr, arg.size);
 
         // Add to the buffer list
         struct k_list *new = kmalloc(sizeof(struct k_list), GFP_KERNEL);
@@ -235,9 +270,19 @@ static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
         new->data->size = arg.size;
         list_add_tail(&new->list, &cardev_data->test_head);
 
+        // Print the buffer list for debug
+        struct list_head *p;
+        struct k_list *my;
+
+        pr_info("Reading list :\n");
+        list_for_each(p, &cardev_data->test_head) {
+            my = list_entry(p, struct k_list, list);
+            pr_info("pbase = %llx, psize = %llx\n", my->data->pbase, my->data->size);
+        }
+
         copy_to_user(p, &arg, sizeof(struct card_alloc_arg));
 
-        return arg.result_virt_addr;
+        return 0;
     }
     }
     return 0;
@@ -344,21 +389,49 @@ static irqreturn_t carfield_handle_irq(int irq, void *_pdev) {
 int probe_node(struct platform_device *pdev,
                struct cardev_private_data *dev_data, struct shared_mem *result,
                const char *name) {
-    struct device_node *tmp_np;
-    struct resource tmp_res;
+    struct device_node *tmp_np, *tmp_mem_np;
+    struct reserved_mem *tmp_mem;
+    struct resource tmp_res, tmp_mem_res;
+
     // Get the node in the DTS
     tmp_np = of_get_child_by_name(pdev->dev.of_node, name);
     if (tmp_np) {
+
+        // Check for reserved L3 memory
+        tmp_mem_np = of_parse_phandle(tmp_np, "memory-region", 0);
+        if(tmp_mem_np) {
+            if(of_address_to_resource(tmp_mem_np, 0, &tmp_mem_res)) {
+                pr_err("of_address_to_resource error\n");
+                goto probe_node_error;
+            }
+            if(dev_data->l3_mem.pbase && dev_data->l3_mem.pbase != tmp_mem_res.start) {
+                pr_err("I do not support multiple L3 memory regions\n");
+            }
+            if(!dev_data->l3_mem.pbase) {
+                dev_data->l3_mem.vbase = devm_ioremap_resource(&pdev->dev, &tmp_mem_res);
+                if (!dev_data->l3_mem.vbase)
+                    goto probe_node_error;
+                dev_data->l3_mem.pbase = tmp_mem_res.start;
+                dev_data->l3_mem.size = resource_size(&tmp_mem_res);
+                // Save the informations in the char device (for card_read)
+                dev_data->buffer_size += sprintf(
+                    dev_data->buffer + dev_data->buffer_size, "%s: %px size = %x\n",
+                    tmp_mem_np->name, dev_data->l3_mem.pbase, dev_data->l3_mem.size);
+            }
+            pr_info("Found reserved mem\n");
+        }
+
         // Get addresses, remap them and save them to the struct shared_mem
         of_address_to_resource(tmp_np, 0, &tmp_res);
         result->vbase = devm_ioremap_resource(&pdev->dev, &tmp_res);
+
         if (IS_ERR(result->vbase)) {
             pr_err("Could not map %s io-region\n", name);
         } else {
             result->pbase = tmp_res.start;
             result->size = resource_size(&tmp_res);
             pr_info("Allocated %s io-region\n", name);
-            // Try to access the memory region
+            // Try to access the first address
             pr_info("Probing %s : %x\n", name, *((uint32_t *)result->vbase));
             if (*((uint32_t *)result->vbase) == 0xbadcab1e) {
                 pr_warn("%s not found in hardware (0xbadcab1e)!\n", name);
@@ -373,14 +446,17 @@ int probe_node(struct platform_device *pdev,
     } else {
         pr_err("No %s in device tree\n", name);
     }
+probe_node_error:
     *result = (struct shared_mem) { 0 };
-    return 1;
+    return -1;
 }
 
 // gets called when matched platform device
 int card_platform_driver_probe(struct platform_device *pdev) {
     int ret, irq, i;
     struct cardev_private_data *dev_data;
+    struct device_node *tmp_np;
+    const __be32 *pcie_axi_bar_addr_field;
 
     pr_info("A device is detected \n");
 
@@ -389,6 +465,8 @@ int card_platform_driver_probe(struct platform_device *pdev) {
         pr_info("Cannot allocate memory \n");
         return -ENOMEM;
     }
+
+    dev_data->pdev = pdev;
 
     // Save the device private data pointer in platform device structure
     dev_set_drvdata(&pdev->dev, dev_data);
@@ -421,6 +499,21 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     // Probe soc_ctrl
     probe_node(pdev, dev_data, &dev_data->soc_ctrl_mem, "soc-ctrl");
 
+    // Probe idma
+    probe_node(pdev, dev_data, &dev_data->idma_mem, "idma");
+
+    // Probe AXI Bar (note that we don't want to map it but just get the phy_addr)
+    tmp_np = of_get_child_by_name(pdev->dev.of_node, "pcie-axi-bar");
+    if (tmp_np) {
+        pcie_axi_bar_addr_field = of_get_address(tmp_np, 0, NULL, NULL);
+        dev_data->pcie_axi_bar_mem =  ((uint64_t)be32_to_cpu(pcie_axi_bar_addr_field[0])) << 32;
+        dev_data->pcie_axi_bar_mem += ((uint64_t)be32_to_cpu(pcie_axi_bar_addr_field[1]));
+        pr_info("Found pcie-axi-bar at device address %llx\n", dev_data->pcie_axi_bar_mem);
+    } else {
+        dev_data->pcie_axi_bar_mem = 0;
+        pr_info("No pcie-axi-bar in device tree\n");
+    }
+
     // Probe scratch registers
     probe_node(pdev, dev_data, &dev_data->ctrl_regs_mem, "ctrl-regs");
 
@@ -449,8 +542,7 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     probe_node(pdev, dev_data, &dev_data->safety_island_mem, "safety-island");
 
     // Probe integer_cluster
-    probe_node(pdev, dev_data, &dev_data->integer_cluster_mem,
-               "integer-cluster");
+    probe_node(pdev, dev_data, &dev_data->integer_cluster_mem, "integer-cluster");
 
     // Probe spatz_cluster
     probe_node(pdev, dev_data, &dev_data->spatz_cluster_mem, "spatz-cluster");
@@ -461,9 +553,10 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     probe_node(pdev, dev_data, &dev_data->l2_intl_1_mem, "l2-intl-1");
     probe_node(pdev, dev_data, &dev_data->l2_cont_1_mem, "l2-cont-1");
 
-    // Buffer list
+    // DMA uffer list
     INIT_LIST_HEAD(&dev_data->test_head);
 
+    // Char device
     ret = cdev_add(&dev_data->cdev, dev_data->dev_num, 1);
     if (ret < 0) {
         pr_err("Cdev add failed \n");
