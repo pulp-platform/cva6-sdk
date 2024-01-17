@@ -1,5 +1,6 @@
 #include <asm/io.h>
 
+// Todo clean includes
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/fs.h>
@@ -20,6 +21,8 @@
 #include <linux/dma-mapping.h>
 #include <linux/dmapool.h>
 #include <linux/string.h>
+
+#include "carfield_driver.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pulp Platform");
@@ -119,13 +122,13 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
         (struct cardev_private_data *)filp->private_data;
 
     switch (vma->vm_pgoff) {
-    case 0:
+    case SOC_CTRL_MMAP_ID:
         strncpy(type, "soc_ctrl", sizeof(type));
         pr_info("Ready to map soc_ctrl\n");
         mapoffset = cardev_data->soc_ctrl_mem.pbase;
         psize = cardev_data->soc_ctrl_mem.size;
         break;
-    case 1:
+    case DMA_BUFS_MMAP_ID:
         strncpy(type, "buffer", sizeof(type));
         pr_info("Ready to map latest buffer\n");
         struct k_list* tail = list_last_entry(&cardev_data->test_head, struct k_list, list);
@@ -133,61 +136,61 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
         mapoffset = tail->data->pbase;
         psize = tail->data->size;
         break;
-    //case 2:
-    //    strncpy(type, "pcie_axi_bar_mem", sizeof(type));
-    //    pr_info("Ready to map pcie_axi_bar_mem\n");
-    //    mapoffset = cardev_data->pcie_axi_bar_mem.pbase;
-    //    psize = cardev_data->pcie_axi_bar_mem.size;
-    //    break;
-    case 5:
+    case L3_MMAP_ID:
+        strncpy(type, "l3_mem", sizeof(type));
+        pr_info("Ready to map l3_mem\n");
+        mapoffset = cardev_data->l3_mem.pbase;
+        psize = cardev_data->l3_mem.size;
+        break;
+    case CTRL_REGS_MMAP_ID:
         strncpy(type, "ctrl_regs", sizeof(type));
         pr_info("Ready to map ctrl_regs\n");
         mapoffset = cardev_data->ctrl_regs_mem.pbase;
         psize = cardev_data->ctrl_regs_mem.size;
         break;
-    case 10:
+    case L2_INTL_0_MMAP_ID:
         strncpy(type, "l2_intl_0", sizeof(type));
         pr_info("Ready to map l2_intl_0\n");
         mapoffset = cardev_data->l2_intl_0_mem.pbase;
         psize = cardev_data->l2_intl_0_mem.size;
         break;
-    case 11:
+    case L2_CONT_0_MMAP_ID:
         strncpy(type, "l2_cont_0", sizeof(type));
         pr_info("Ready to map l2_cont_0\n");
         mapoffset = cardev_data->l2_cont_0_mem.pbase;
         psize = cardev_data->l2_cont_0_mem.size;
         break;
-    case 12:
+    case L2_INTL_1_MMAP_ID:
         strncpy(type, "l2_intl_1", sizeof(type));
         pr_info("Ready to map l2_intl_1\n");
         mapoffset = cardev_data->l2_intl_1_mem.pbase;
         psize = cardev_data->l2_intl_1_mem.size;
         break;
-    case 13:
+    case L2_CONT_1_MMAP_ID:
         strncpy(type, "l2_cont_1", sizeof(type));
         pr_info("Ready to map l2_cont_1\n");
         mapoffset = cardev_data->l2_cont_1_mem.pbase;
         psize = cardev_data->l2_cont_1_mem.size;
         break;
-    case 20:
+    case IDMA_MMAP_ID:
         strncpy(type, "idma", sizeof(type));
         pr_info("Ready to map idma\n");
         mapoffset = cardev_data->idma_mem.pbase;
         psize = cardev_data->idma_mem.size;
         break;
-    case 100:
+    case SAFETY_ISLAND_MMAP_ID:
         strncpy(type, "safety_island", sizeof(type));
         pr_info("Ready to map safety_island\n");
         mapoffset = cardev_data->safety_island_mem.pbase;
         psize = cardev_data->safety_island_mem.size;
         break;
-    case 200:
+    case INTEGER_CLUSTER_MMAP_ID:
         strncpy(type, "integer_cluster", sizeof(type));
         pr_info("Ready to map safety_island\n");
         mapoffset = cardev_data->integer_cluster_mem.pbase;
         psize = cardev_data->integer_cluster_mem.size;
         break;
-    case 300:
+    case SPATZ_CLUSTER_MMAP_ID:
         strncpy(type, "spatz_cluster", sizeof(type));
         pr_info("Ready to map spatz_cluster\n");
         mapoffset = cardev_data->spatz_cluster_mem.pbase;
@@ -200,7 +203,7 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
 
     vsize = vma->vm_end - vma->vm_start;
     if (vsize > psize) {
-        pr_err("error: vsize %ld > psize %lx\n", vsize, psize);
+        pr_err("error: %s vsize %lx > psize %lx\n", type, vsize, psize);
         pr_err("  vma->vm_end %lx vma->vm_start %lx\n", vma->vm_end,
                 vma->vm_start);
         return -EINVAL;
@@ -222,45 +225,30 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
     return ret;
 }
 
-struct card_alloc_arg {
-    size_t size;
-    uint64_t result_phys_addr;
-    uint64_t result_virt_addr;
-};
 
-static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
-    void __user *argp = (void __user *)arg;
-    int __user *p = argp;
+static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg_user_addr) {
+    // Pointers to user arguments
+    void __user *argp = (void __user *)arg_user_addr;
+    // Get driver data
     struct cardev_private_data *cardev_data =
         (struct cardev_private_data *)file->private_data;
-
-    pr_info("ioctl received\n");
-
-    // check correct magic
-    // if (_IOC_TYPE(cmd) != SNIOC_MAGIC)
-    //   return -ENOTTY;
+    // Fetch user arguments
+    struct card_ioctl_arg arg;
+    if (copy_from_user(&arg, argp, sizeof(struct card_ioctl_arg)))
+        return -EFAULT;
 
     switch (cmd) {
     // Alloc physically contiguous memory
-    case 0x1: {
-        // Get user arguments
-        struct card_alloc_arg arg;
+    case IOCTL_DMA_ALLOC: {
         void *result_virt = 0;
-        dma_addr_t result_dma = 0;
-        if (copy_from_user(&arg, p, sizeof(struct card_alloc_arg)))
-            return -EFAULT;
-
-        // Alloc memory region
+        // Alloc memory region (note PHY address = DMA address)
         arg.result_virt_addr = dma_alloc_coherent(&cardev_data->pdev->dev, arg.size, &arg.result_phys_addr, GFP_KERNEL);
-
         if (!arg.result_virt_addr)
             return -ENOMEM;
-        
-        // Offset if there is a PCIe endpoint in the device
+
+        // Offset if there is a PCIe endpoint in the device (then the driver should ran on the PCIe host)
         if (cardev_data->pcie_axi_bar_mem)
             arg.result_phys_addr += cardev_data->pcie_axi_bar_mem;
-
-        pr_info("offset:%llx, phys(dma):%llx, virt:%llx, size:%llx\n", cardev_data->pcie_axi_bar_mem, arg.result_phys_addr, arg.result_virt_addr, arg.size);
 
         // Add to the buffer list
         struct k_list *new = kmalloc(sizeof(struct k_list), GFP_KERNEL);
@@ -271,20 +259,35 @@ static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
         list_add_tail(&new->list, &cardev_data->test_head);
 
         // Print the buffer list for debug
+        pr_info("Reading list :\n");
         struct list_head *p;
         struct k_list *my;
-
-        pr_info("Reading list :\n");
         list_for_each(p, &cardev_data->test_head) {
             my = list_entry(p, struct k_list, list);
-            pr_info("pbase = %llx, psize = %llx\n", my->data->pbase, my->data->size);
+            pr_info("pbase = %#llx, psize = %#llx\n", my->data->pbase, my->data->size);
         }
-
-        copy_to_user(p, &arg, sizeof(struct card_alloc_arg));
-
-        return 0;
+        break;
     }
+    case IOCTL_MEM_INFOS: {
+        pr_info("Lookup %i\n", arg.mmap_id);
+        struct shared_mem *requested_mem;
+        PTR_TO_DEVDATA_REGION(requested_mem, cardev_data, arg.mmap_id)
+        // TODO differenciate errors from uninitialized memory and unknown map_id
+        if( !requested_mem ){
+            pr_err("Unknown mmap_id %i\n", arg.mmap_id);
+            return -1;
+        }
+        arg.size = requested_mem->size;
+        arg.result_phys_addr = requested_mem->pbase;
+        break;
     }
+    default:
+        return -1;
+    }
+
+    // Send back result to user
+    if(copy_to_user(argp, &arg, sizeof(struct card_ioctl_arg)))
+        return -EFAULT;
     return 0;
 }
 
@@ -361,7 +364,6 @@ int card_platform_driver_remove(struct platform_device *pdev) {
 // (Note: other drivers, as ethernet, might handle the same irq)
 int already_entered[64];
 static irqreturn_t carfield_handle_irq(int irq, void *_pdev) {
-    // printk("carfield_handle_irq %i\n", irq);
     struct platform_device *pdev = _pdev;
     unsigned int pending;
     struct cardev_private_data *dev_data = dev_get_drvdata(&pdev->dev);
@@ -378,9 +380,6 @@ static irqreturn_t carfield_handle_irq(int irq, void *_pdev) {
     old = ioread32(dev_data->gpio_mem.vbase + 0x00);
     iowrite32(BIT(hw_irq - CARFIELD_GPIO_FIRST_IRQ),
               dev_data->gpio_mem.vbase + 0x00);
-    // printk("Hw = %i, wrote = %x, old = %x , new : %x\n", hw_irq,
-    // BIT(hw_irq-CARFIELD_GPIO_FIRST_IRQ), old,
-    // ioread32(dev_data->gpio_mem.vbase + 0x00));
 
     already_entered[irq] = 0;
     return IRQ_HANDLED;
@@ -520,10 +519,10 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     // Probe gpio and activate rising edge interrupts
     probe_node(pdev, dev_data, &dev_data->gpio_mem, "gpio");
     *((uint32_t *)(dev_data->gpio_mem.vbase + 0x04)) = (uint32_t)0xffffffff;
-    //*((uint32_t*)(dev_data->gpio_mem.vbase + 0x2C)) = (uint32_t) 0xffffffff;
     *((uint32_t *)(dev_data->gpio_mem.vbase + 0x34)) = (uint32_t)0xffffffff;
 
     // Request gpio irqs
+    // TODO: Do not do that if running on PCIe host
     for (i = 0; i < CARFIELD_GPIO_N_IRQS; i++) {
         irq = of_irq_get(of_get_child_by_name(pdev->dev.of_node, "gpio"), i);
         if (irq < 0)
@@ -534,7 +533,7 @@ int card_platform_driver_probe(struct platform_device *pdev) {
             pr_err("Request gpio irq %i failed with: %i\n", i, ret);
     }
 
-    // Deisolate all
+    // Deisolate all islands
     for (i = ISOLATE_BEGIN_OFFSET; i < ISOLATE_END_OFFSET; i += 4)
         *((uint32_t *)(dev_data->soc_ctrl_mem.vbase + i)) = (uint32_t)0x0;
 

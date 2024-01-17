@@ -15,7 +15,7 @@ CROSS_COMPILE_NATIVE ?=
 CROSS_COMPILE_BUILDROOT ?= $(BR_OUTPUT_DIR)/host/bin/riscv64-buildroot-linux-gnu-
 
 # Linux compilation arguments
-obj-m := carfield.o
+obj-m := carfield_driver.o
 ccflags-y += ${CFLAGS} -O2 -DDEBUG
 
 .PHONY: all dis clean build
