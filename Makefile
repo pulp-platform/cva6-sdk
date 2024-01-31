@@ -124,6 +124,17 @@ $(RISCV)/fw_payload.bin: $(RISCV)/u-boot.bin
 	# Also bring in dump
 	$(TOOLCHAIN_PREFIX)objdump -d -S  opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf > $(RISCV)/fw_payload.dump
 
+$(RISCV)/%.dtb: dts/%.dts
+	dtc -o $@ $^
+
+# OpenSBI with linux as payload
+$(RISCV)/fw_payload_linux.bin: $(RISCV)/Image $(RISCV)/cheshire.dtb
+	make -C opensbi FW_PAYLOAD_PATH=$(RISCV)/Image FW_FDT_PATH=$(RISCV)/cheshire.dtb $(sbi-mk)
+	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf $(RISCV)/fw_payload_linux.elf
+	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/fw_payload_linux.bin
+# $(TOOLCHAIN_PREFIX)objdump -d -S  opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf > $(RISCV)/fw_payload.dump
+
+
 # OpenSBI for Spike with Linux as payload
 $(RISCV)/spike_fw_payload.elf: PLATFORM=generic
 $(RISCV)/spike_fw_payload.elf: $(RISCV)/Image
@@ -156,10 +167,11 @@ format-sd: $(SDDEVICE)
 gcc: $(CC)
 vmlinux: $(RISCV)/vmlinux
 fw_payload.bin: $(RISCV)/fw_payload.bin
+fw_payload_linux.bin: $(RISCV)/fw_payload_linux.bin
 uImage: $(RISCV)/uImage
 spike_payload: $(RISCV)/spike_fw_payload.elf
 
-images: $(CC) $(RISCV)/fw_payload.bin $(RISCV)/uImage
+images: $(CC) $(RISCV)/fw_payload_linux.bin $(RISCV)/uImage $(RISCV)/Image
 
 clean:
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
