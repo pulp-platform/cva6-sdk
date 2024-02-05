@@ -75,7 +75,7 @@ tests: install-dir $(CC)
 
 $(CC): $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig)
 	make -C buildroot defconfig BR2_DEFCONFIG=../$(buildroot_defconfig)
-	make -C buildroot host-gcc-final $(buildroot-mk)
+	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk)
 
 all: $(CC) isa-sim
 
