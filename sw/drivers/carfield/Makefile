@@ -14,6 +14,8 @@ KERNEL_DIR_BUILDROOT := $(BR_OUTPUT_DIR)/build/linux-5.16.9
 CROSS_COMPILE_NATIVE ?=
 CROSS_COMPILE_BUILDROOT ?= $(BR_OUTPUT_DIR)/host/bin/riscv64-buildroot-linux-gnu-
 
+ARCH := riscv
+
 # Linux compilation arguments
 obj-m := carfield_driver.o
 ccflags-y += ${CFLAGS} -O2 -DDEBUG
@@ -24,7 +26,7 @@ all: modules
 build: modules
 
 modules: $(patsubst %.o,%.c,$(obj-m))
-	$(MAKE) CROSS_COMPILE=$(CROSS_COMPILE_$(PLATFORM)) -C $(KERNEL_DIR_$(PLATFORM)) M=$(shell pwd) modules
+	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_$(PLATFORM)) -C $(KERNEL_DIR_$(PLATFORM)) M=$(shell pwd) ARCH=riscv modules
 
 dis: modules
 	$(CROSS_COMPILE_$(PLATFORM))objdump -DS carfield.ko > carfield.disasm
