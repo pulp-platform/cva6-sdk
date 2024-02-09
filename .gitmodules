@@ -9,12 +9,12 @@
 [submodule "buildroot"]
 	path = buildroot
 	url = git://git.buildroot.net/buildroot
-[submodule "vitetris"]
-	path = vitetris
-	url = https://github.com/pulp-platform/vitetris.git
 [submodule "u-boot"]
 	path = u-boot
 	url = https://github.com/pulp-platform/u-boot
 [submodule "opensbi"]
 	path = opensbi
 	url = https://github.com/pulp-platform/opensbi
+[submodule "vitetris-src"]
+	path = package/vitetris/vitetris-src
+	url = https://github.com/pulp-platform/vitetris.git
