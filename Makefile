@@ -2,7 +2,7 @@
 
 XLEN     := 64
 ROOT     := $(patsubst %/,%, $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-RISCV    := $(PWD)/install$(XLEN)
+RISCV    := $(ROOT)/install$(XLEN)
 DEST     := $(abspath $(RISCV))
 PATH     := $(DEST)/bin:$(PATH)
 GZIP_BIN ?= gzip
@@ -106,8 +106,8 @@ $(RISCV)/uImage: $(RISCV)/Image.gz $(MKIMAGE)
 
 # Dtb for itb image
 $(RISCV)/occamy.dtb: 
-	@if [ -z $$OCCAMY_DTS ]; then echo "Please set \$${OCCAMY_DTS} with the device tree."; exit 1; fi
-	u-boot/scripts/dtc/dtc -I dts $(OCCAMY_DTS) -o $(RISCV)/occamy.dtb
+	@if [ -z $$OCCAMY_ROOT ]; then echo "Please set \$${OCCAMY_ROOT}"; exit 1; fi
+	u-boot/scripts/dtc/dtc -i $(OCCAMY_ROOT)/target/fpga/bootrom -I dts $(OCCAMY_ROOT)/target/fpga/bootrom/occamy.dts -o $(RISCV)/occamy.dtb
 	u-boot/scripts/dtc/dtc -I dtb $(RISCV)/occamy.dtb -O dts -o $(RISCV)/occamy.dtb.dump
 
 # Dtb
