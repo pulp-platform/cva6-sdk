@@ -153,10 +153,10 @@ format-sd: $(SDDEVICE)
 	sgdisk --clear -g --new=1:$(DT_SECTORSTART):$(DT_SECTOREND) --new=2:$(FW_SECTORSTART):$(FW_SECTOREND) --new=3:$(UIMAGE_SECTORSTART):$(UIMAGE_SECTOREND) --new=4:$(ROOT_SECTORSTART):$(ROOT_SECTOREND) --typecode=1:b000 --typecode=2:3000 --typecode=3:8300 --typecode=4:8200 $(SDDEVICE)
 
 # Drivers and applications
-rootfs/root/carfield.ko:
+rootfs/root/carfield_driver.ko:
 	make -C buildroot linux
 	make -C sw/drivers/carfield
-	cp sw/drivers/carfield/carfield.ko rootfs/root/carfield.ko
+	cp sw/drivers/carfield/carfield_driver.ko rootfs/root/carfield_driver.ko
 
 # specific recipes
 gcc: $(CC)
@@ -165,7 +165,7 @@ fw_payload.bin: $(RISCV)/fw_payload.bin
 uImage: $(RISCV)/uImage
 spike_payload: $(RISCV)/spike_fw_payload.elf
 
-images: $(CC) rootfs/root/carfield.ko $(RISCV)/fw_payload.bin $(RISCV)/uImage
+images: $(CC) rootfs/root/carfield_driver.ko $(RISCV)/fw_payload.bin $(RISCV)/uImage
 
 clean:
 	rm -f rootfs/root/*.ko rootfs/root/tests/*.app

@@ -1,1 +1,1 @@
-insmod /root/carfield.ko
+insmod /root/carfield_driver.ko
