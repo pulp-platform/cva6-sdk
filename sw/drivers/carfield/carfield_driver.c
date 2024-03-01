@@ -48,6 +48,7 @@ struct cardev_private_data {
     struct platform_device *pdev;
     struct shared_mem idma_mem;
     struct shared_mem soc_ctrl_mem;
+    struct shared_mem mboxes_mem;
     struct shared_mem ctrl_regs_mem;
     struct shared_mem gpio_mem;
     struct shared_mem l2_intl_0_mem;
@@ -127,6 +128,12 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
         pr_info("Ready to map soc_ctrl\n");
         mapoffset = cardev_data->soc_ctrl_mem.pbase;
         psize = cardev_data->soc_ctrl_mem.size;
+        break;
+    case MBOXES_MMAP_ID:
+        strncpy(type, "mboxes", sizeof(type));
+        pr_info("Ready to map mboxes\n");
+        mapoffset = cardev_data->mboxes_mem.pbase;
+        psize = cardev_data->mboxes_mem.size;
         break;
     case DMA_BUFS_MMAP_ID:
         strncpy(type, "buffer", sizeof(type));
@@ -497,6 +504,9 @@ int card_platform_driver_probe(struct platform_device *pdev) {
 
     // Probe soc_ctrl
     probe_node(pdev, dev_data, &dev_data->soc_ctrl_mem, "soc-ctrl");
+
+    // Probe mboxes
+    probe_node(pdev, dev_data, &dev_data->mboxes_mem, "mboxes");
 
     // Probe idma
     probe_node(pdev, dev_data, &dev_data->idma_mem, "idma");

@@ -4,6 +4,7 @@
 #define SOC_CTRL_MMAP_ID 0
 #define DMA_BUFS_MMAP_ID 1
 #define L3_MMAP_ID 2
+#define MBOXES_MMAP_ID 3
 #define CTRL_REGS_MMAP_ID 5
 #define L2_INTL_0_MMAP_ID 10
 #define L2_CONT_0_MMAP_ID 11
@@ -20,8 +21,8 @@
 
 #define PTR_TO_DEVDATA_REGION(VAR,DEVDATA,X) \
     switch(X) { \
-        case(SOC_CTRL_MMAP_ID       ): VAR = &DEVDATA->idma_mem             ; break; \
-        case(DMA_BUFS_MMAP_ID       ): VAR = &DEVDATA->soc_ctrl_mem         ; break; \
+        case(SOC_CTRL_MMAP_ID       ): VAR = &DEVDATA->soc_ctrl_mem         ; break; \
+        case(MBOXES_MMAP_ID         ): VAR = &DEVDATA->mboxes_mem           ; break; \
         case(L3_MMAP_ID             ): VAR = &DEVDATA->l3_mem               ; break; \
         case(CTRL_REGS_MMAP_ID      ): VAR = &DEVDATA->ctrl_regs_mem        ; break; \
         case(L2_INTL_0_MMAP_ID      ): VAR = &DEVDATA->l2_intl_0_mem        ; break; \
