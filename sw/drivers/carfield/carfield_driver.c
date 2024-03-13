@@ -125,81 +125,81 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
     switch (vma->vm_pgoff) {
     case SOC_CTRL_MMAP_ID:
         strncpy(type, "soc_ctrl", sizeof(type));
-        pr_info("Ready to map soc_ctrl\n");
+        pr_debug("Ready to map soc_ctrl\n");
         mapoffset = cardev_data->soc_ctrl_mem.pbase;
         psize = cardev_data->soc_ctrl_mem.size;
         break;
     case MBOXES_MMAP_ID:
         strncpy(type, "mboxes", sizeof(type));
-        pr_info("Ready to map mboxes\n");
+        pr_debug("Ready to map mboxes\n");
         mapoffset = cardev_data->mboxes_mem.pbase;
         psize = cardev_data->mboxes_mem.size;
         break;
     case DMA_BUFS_MMAP_ID:
         strncpy(type, "buffer", sizeof(type));
-        pr_info("Ready to map latest buffer\n");
+        pr_debug("Ready to map latest buffer\n");
         struct k_list* tail = list_last_entry(&cardev_data->test_head, struct k_list, list);
-        pr_info("dma_addr: %llx\n", tail->data->pbase);
+        pr_debug("dma_addr: %llx\n", tail->data->pbase);
         mapoffset = tail->data->pbase;
         psize = tail->data->size;
         break;
     case L3_MMAP_ID:
         strncpy(type, "l3_mem", sizeof(type));
-        pr_info("Ready to map l3_mem\n");
+        pr_debug("Ready to map l3_mem\n");
         mapoffset = cardev_data->l3_mem.pbase;
         psize = cardev_data->l3_mem.size;
         break;
     case CTRL_REGS_MMAP_ID:
         strncpy(type, "ctrl_regs", sizeof(type));
-        pr_info("Ready to map ctrl_regs\n");
+        pr_debug("Ready to map ctrl_regs\n");
         mapoffset = cardev_data->ctrl_regs_mem.pbase;
         psize = cardev_data->ctrl_regs_mem.size;
         break;
     case L2_INTL_0_MMAP_ID:
         strncpy(type, "l2_intl_0", sizeof(type));
-        pr_info("Ready to map l2_intl_0\n");
+        pr_debug("Ready to map l2_intl_0\n");
         mapoffset = cardev_data->l2_intl_0_mem.pbase;
         psize = cardev_data->l2_intl_0_mem.size;
         break;
     case L2_CONT_0_MMAP_ID:
         strncpy(type, "l2_cont_0", sizeof(type));
-        pr_info("Ready to map l2_cont_0\n");
+        pr_debug("Ready to map l2_cont_0\n");
         mapoffset = cardev_data->l2_cont_0_mem.pbase;
         psize = cardev_data->l2_cont_0_mem.size;
         break;
     case L2_INTL_1_MMAP_ID:
         strncpy(type, "l2_intl_1", sizeof(type));
-        pr_info("Ready to map l2_intl_1\n");
+        pr_debug("Ready to map l2_intl_1\n");
         mapoffset = cardev_data->l2_intl_1_mem.pbase;
         psize = cardev_data->l2_intl_1_mem.size;
         break;
     case L2_CONT_1_MMAP_ID:
         strncpy(type, "l2_cont_1", sizeof(type));
-        pr_info("Ready to map l2_cont_1\n");
+        pr_debug("Ready to map l2_cont_1\n");
         mapoffset = cardev_data->l2_cont_1_mem.pbase;
         psize = cardev_data->l2_cont_1_mem.size;
         break;
     case IDMA_MMAP_ID:
         strncpy(type, "idma", sizeof(type));
-        pr_info("Ready to map idma\n");
+        pr_debug("Ready to map idma\n");
         mapoffset = cardev_data->idma_mem.pbase;
         psize = cardev_data->idma_mem.size;
         break;
     case SAFETY_ISLAND_MMAP_ID:
         strncpy(type, "safety_island", sizeof(type));
-        pr_info("Ready to map safety_island\n");
+        pr_debug("Ready to map safety_island\n");
         mapoffset = cardev_data->safety_island_mem.pbase;
         psize = cardev_data->safety_island_mem.size;
         break;
     case INTEGER_CLUSTER_MMAP_ID:
         strncpy(type, "integer_cluster", sizeof(type));
-        pr_info("Ready to map safety_island\n");
+        pr_debug("Ready to map safety_island\n");
         mapoffset = cardev_data->integer_cluster_mem.pbase;
         psize = cardev_data->integer_cluster_mem.size;
         break;
     case SPATZ_CLUSTER_MMAP_ID:
         strncpy(type, "spatz_cluster", sizeof(type));
-        pr_info("Ready to map spatz_cluster\n");
+        pr_debug("Ready to map spatz_cluster\n");
         mapoffset = cardev_data->spatz_cluster_mem.pbase;
         psize = cardev_data->spatz_cluster_mem.size;
         break;
@@ -220,14 +220,14 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
     vma->vm_flags |= VM_IO | VM_RESERVED;
     vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 
-    pr_info("%s mmap: phys: %#lx, virt: %#lx vsize: %#lx psize: %#lx\n", type,
+    pr_debug("%s mmap: phys: %#lx, virt: %#lx vsize: %#lx psize: %#lx\n", type,
             mapoffset, vma->vm_start, vsize, psize);
 
     ret = remap_pfn_range(vma, vma->vm_start, mapoffset >> PAGE_SHIFT, vsize,
                           vma->vm_page_prot);
 
     if (ret)
-        pr_info("mmap error: %d\n", ret);
+        pr_debug("mmap error: %d\n", ret);
 
     return ret;
 }
@@ -266,17 +266,17 @@ static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg_us
         list_add_tail(&new->list, &cardev_data->test_head);
 
         // Print the buffer list for debug
-        pr_info("Reading list :\n");
+        pr_debug("Reading list :\n");
         struct list_head *p;
         struct k_list *my;
         list_for_each(p, &cardev_data->test_head) {
             my = list_entry(p, struct k_list, list);
-            pr_info("pbase = %#llx, psize = %#llx\n", my->data->pbase, my->data->size);
+            pr_debug("pbase = %#llx, psize = %#llx\n", my->data->pbase, my->data->size);
         }
         break;
     }
     case IOCTL_MEM_INFOS: {
-        pr_info("Lookup %i\n", arg.mmap_id);
+        pr_debug("Lookup %i\n", arg.mmap_id);
         struct shared_mem *requested_mem;
         PTR_TO_DEVDATA_REGION(requested_mem, cardev_data, arg.mmap_id)
         // TODO differenciate errors from uninitialized memory and unknown map_id
@@ -305,8 +305,8 @@ ssize_t card_read(struct file *filp, char __user *buff, size_t count,
 
     int max_size = cardev_data->buffer_size;
 
-    // pr_info("read requested for %zu bytes \n", count);
-    // pr_info("Current file position = %lld\n", *f_pos);
+    // pr_debug("read requested for %zu bytes \n", count);
+    // pr_debug("Current file position = %lld\n", *f_pos);
     // Adjust the count
     if ((*f_pos + count) > max_size)
         count = max_size - *f_pos;
@@ -319,8 +319,8 @@ ssize_t card_read(struct file *filp, char __user *buff, size_t count,
     // Update the current file position
     *f_pos += count;
 
-    // pr_info("Number of bytes successfully read= %zu\n", count);
-    // pr_info("Updated file position = %lld\n", *f_pos);
+    // pr_debug("Number of bytes successfully read= %zu\n", count);
+    // pr_debug("Updated file position = %lld\n", *f_pos);
 
     return count;
 }
@@ -331,14 +331,14 @@ int card_open(struct inode *inode, struct file *filp) {
     cardev_data = container_of(inode->i_cdev, struct cardev_private_data, cdev);
     filp->private_data = cardev_data;
     ret = check_permission(PDATA_PERM, filp->f_mode);
-    // (!ret) ? pr_info("open was successful\n")
-    //        : pr_info("open was unsuccessful\n");
-    // pr_info("Does this run lets see \n");
+    // (!ret) ? pr_debug("open was successful\n")
+    //        : pr_debug("open was unsuccessful\n");
+    // pr_debug("Does this run lets see \n");
     return ret;
 }
 
 int card_release(struct inode *inode, struct file *filp) {
-    // pr_info("release was successful \n");
+    // pr_debug("release was successful \n");
     return 0;
 }
 
@@ -362,7 +362,7 @@ int card_platform_driver_remove(struct platform_device *pdev) {
 
     cardrv_data.total_devices--;
 
-    pr_info("A device is removed \n");
+    pr_debug("A device is removed \n");
 
     return 0;
 }
@@ -424,7 +424,7 @@ int probe_node(struct platform_device *pdev,
                     dev_data->buffer + dev_data->buffer_size, "%s: %px size = %x\n",
                     tmp_mem_np->name, dev_data->l3_mem.pbase, dev_data->l3_mem.size);
             }
-            pr_info("Found reserved mem\n");
+            pr_debug("Found reserved mem\n");
         }
 
         // Get addresses, remap them and save them to the struct shared_mem
@@ -436,9 +436,9 @@ int probe_node(struct platform_device *pdev,
         } else {
             result->pbase = tmp_res.start;
             result->size = resource_size(&tmp_res);
-            pr_info("Allocated %s io-region\n", name);
+            pr_debug("Allocated %s io-region\n", name);
             // Try to access the first address
-            pr_info("Probing %s : %x\n", name, *((uint32_t *)result->vbase));
+            pr_debug("Probing %s : %x\n", name, *((uint32_t *)result->vbase));
             if (*((uint32_t *)result->vbase) == 0xbadcab1e) {
                 pr_warn("%s not found in hardware (0xbadcab1e)!\n", name);
                 *result = (struct shared_mem) { 0 };
@@ -464,11 +464,11 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     struct device_node *tmp_np;
     const __be32 *pcie_axi_bar_addr_field;
 
-    pr_info("A device is detected \n");
+    pr_debug("A device is detected \n");
 
     dev_data = devm_kzalloc(&pdev->dev, sizeof(*dev_data), GFP_KERNEL);
     if (!dev_data) {
-        pr_info("Cannot allocate memory \n");
+        pr_debug("Cannot allocate memory \n");
         return -ENOMEM;
     }
 
@@ -477,10 +477,10 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     // Save the device private data pointer in platform device structure
     dev_set_drvdata(&pdev->dev, dev_data);
 
-    pr_info("Device size = %d\n", PDATA_SIZE);
-    pr_info("Device permission = %d\n", PDATA_PERM);
-    pr_info("Device serial number = %s\n", PDATA_SERIAL);
-    pr_info("platform_device(%p) : name=%s ; id=%i ; id_auto=%i ; dev=%p(%s) ; "
+    pr_debug("Device size = %d\n", PDATA_SIZE);
+    pr_debug("Device permission = %d\n", PDATA_PERM);
+    pr_debug("Device serial number = %s\n", PDATA_SERIAL);
+    pr_debug("platform_device(%p) : name=%s ; id=%i ; id_auto=%i ; dev=%p(%s) ; "
             "num_ressources=%i ; id_entry=%p\n",
             pdev, pdev->name, pdev->id, pdev->id_auto, pdev->dev,
             pdev->dev.init_name, pdev->num_resources, pdev->id_entry);
@@ -489,7 +489,7 @@ int card_platform_driver_probe(struct platform_device *pdev) {
      * from the platform data */
     dev_data->buffer = devm_kzalloc(&pdev->dev, PDATA_SIZE, GFP_KERNEL);
     if (!dev_data->buffer) {
-        pr_info("Cannot allocate memory \n");
+        pr_debug("Cannot allocate memory \n");
         return -ENOMEM;
     }
     dev_data->buffer_size = 0;
@@ -517,10 +517,10 @@ int card_platform_driver_probe(struct platform_device *pdev) {
         pcie_axi_bar_addr_field = of_get_address(tmp_np, 0, NULL, NULL);
         dev_data->pcie_axi_bar_mem =  ((uint64_t)be32_to_cpu(pcie_axi_bar_addr_field[0])) << 32;
         dev_data->pcie_axi_bar_mem += ((uint64_t)be32_to_cpu(pcie_axi_bar_addr_field[1]));
-        pr_info("Found pcie-axi-bar at device address %llx\n", dev_data->pcie_axi_bar_mem);
+        pr_debug("Found pcie-axi-bar at device address %llx\n", dev_data->pcie_axi_bar_mem);
     } else {
         dev_data->pcie_axi_bar_mem = 0;
-        pr_info("No pcie-axi-bar in device tree\n");
+        pr_debug("No pcie-axi-bar in device tree\n");
     }
 
     // Probe scratch registers
@@ -585,7 +585,7 @@ int card_platform_driver_probe(struct platform_device *pdev) {
 
     cardrv_data.total_devices++;
 
-    pr_info("Probe was successful \n");
+    pr_debug("Probe was successful \n");
 
     return 0;
 }
@@ -625,7 +625,7 @@ static int __init card_platform_driver_init(void) {
 
     platform_driver_register(&card_platform_driver);
 
-    pr_info("card platform driver loaded \n");
+    pr_debug("card platform driver loaded \n");
 
     return 0;
 }
@@ -640,7 +640,7 @@ static void __exit card_platform_driver_cleanup(void) {
     // Unregister device numbers for MAX_DEVICES
     unregister_chrdev_region(cardrv_data.device_num_base, MAX_DEVICES);
 
-    pr_info("card platform driver unloaded \n");
+    pr_debug("card platform driver unloaded \n");
 }
 
 module_init(card_platform_driver_init);
