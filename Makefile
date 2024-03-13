@@ -75,9 +75,13 @@ tests: install-dir $(CC)
 
 $(CC): $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig)
 	make -C buildroot defconfig BR2_DEFCONFIG=../$(buildroot_defconfig)
-	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk) 
+	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk) > /dev/null
+	# Prepare future relocation (example HERO CI)
+	make -C buildroot host-patchelf
+	echo `realpath buildroot/output/host` > buildroot/output/host/share/buildroot/sdk-location
+	cd buildroot && HOST_DIR=`realpath output/host` STAGING_DIR=`realpath output/host/riscv64-buildroot-linux-gnu/sysroot` TARGET_DIR=`realpath output/target` PER_PACKAGE_DIR=`pwd`/per-package ./support/scripts/fix-rpath host
 
-all: $(CC) isa-sim
+all: $(CC)
 
 # benchmark for the cache subsystem
 rootfs/cachetest.elf: $(CC)
@@ -179,7 +183,7 @@ clean-all: clean
 	rm -rf $(RISCV) riscv-isa-sim/build riscv-tests/build
 	make -C buildroot clean
 
-.PHONY: gcc vmlinux images help fw_payload.bin uImage
+.PHONY: gcc vmlinux images help fw_payload.bin uImage all
 
 help:
 	@echo "usage: $(MAKE) [tool/img] ..."
