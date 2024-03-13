@@ -11,7 +11,7 @@ BR_OUTPUT_DIR ?= $(realpath ../../../buildroot/output/)
 
 ifeq ($(NATIVE),0)
 CROSS_COMPILE ?= $(BR_OUTPUT_DIR)/host/bin/riscv64-buildroot-linux-gnu-
-KERNEL_DIR    ?= $(BR_OUTPUT_DIR)/build/linux-5.16.9
+KERNEL_DIR    ?= $(BR_OUTPUT_DIR)/build/linux-6.1.22
 else
 CROSS_COMPILE ?=
 KERNEL_DIR    ?= /lib/modules/$(shell uname -r)/build

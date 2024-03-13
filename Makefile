@@ -75,7 +75,9 @@ tests: install-dir $(CC)
 
 $(CC): $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig)
 	make -C buildroot defconfig BR2_DEFCONFIG=../$(buildroot_defconfig)
-	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk)
+	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk) > /dev/null
+	make -C buildroot host-patchelf
+	cd buildroot && HOST_DIR=`realpath output/host` STAGING_DIR=`realpath output/host/riscv64-buildroot-linux-gnu/sysroot` TARGET_DIR=`realpath output/target` PER_PACKAGE_DIR=`pwd`/per-package ./support/scripts/fix-rpath host
 
 all: $(CC) isa-sim
 
@@ -91,7 +93,7 @@ rootfs/tetris: $(CC)
 
 $(RISCV)/vmlinux: $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig) $(CC) rootfs/cachetest.elf rootfs/tetris
 	mkdir -p $(RISCV)
-	make -C buildroot $(buildroot-mk)
+	make -C buildroot $(buildroot-mk) > /dev/null
 	cp buildroot/output/images/vmlinux $@
 
 $(RISCV)/Image: $(RISCV)/vmlinux

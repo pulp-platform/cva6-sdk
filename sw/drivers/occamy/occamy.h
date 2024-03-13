@@ -24,7 +24,7 @@ struct cardev_private_data {
     struct shared_mem spm_wide_mem;
     struct shared_mem l3_mem;
     // Not accessible from the host (> 4GB)
-    uintptr_t pcie_axi_bar_mem;
+    struct shared_mem pcie_axi_bar_mem;
     // Buffer allocated list
     struct list_head test_head;
     // Hw device infos

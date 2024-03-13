@@ -152,15 +152,22 @@ static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg_us
     switch (cmd) {
     // Alloc physically contiguous memory
     case IOCTL_DMA_ALLOC: {
+        dma_addr_t result_phys = 0;
         void *result_virt = 0;
-        // Alloc memory region (note PHY address = DMA address)
-        arg.result_virt_addr = dma_alloc_coherent(&cardev_data->pdev->dev, arg.size, &arg.result_phys_addr, GFP_KERNEL);
-        if (!arg.result_virt_addr)
+        printk("dma_alloc_coherent %p, %llx (%llx pages)\n", &cardev_data->pdev->dev, arg.size, 1 << (ALIGN(arg.size, PAGE_SIZE)/PAGE_SIZE));
+        // Alloc memory region (note PHY address = DMA address), issue with dma_alloc_coherent on milk-v
+        result_virt = __get_free_pages(GFP_KERNEL | GFP_DMA32, 1 << (ALIGN(arg.size, PAGE_SIZE)/PAGE_SIZE));
+        result_phys = virt_to_phys(result_virt);
+        printk("dma_alloc_coherent returns %llx %llx\n", result_virt, result_phys);
+        if (!result_virt)
             return -ENOMEM;
+        arg.result_virt_addr = result_virt;
+        arg.result_phys_addr = result_phys;
 
         // Offset if there is a PCIe endpoint in the device (then the driver should ran on the PCIe host)
-        if (cardev_data->pcie_axi_bar_mem)
-            arg.result_phys_addr += cardev_data->pcie_axi_bar_mem;
+        // The mask removes the host offset to the device's tree
+        if (cardev_data->pcie_axi_bar_mem.pbase)
+            arg.result_phys_addr += 0xffffffff & cardev_data->pcie_axi_bar_mem.pbase;
 
         // Add to the buffer list
         struct k_list *new = kmalloc(sizeof(struct k_list), GFP_KERNEL);

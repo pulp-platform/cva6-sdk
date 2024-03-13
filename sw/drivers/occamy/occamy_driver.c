@@ -162,6 +162,9 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     // Probe spm-wide
     probe_node(pdev, dev_data, &dev_data->spm_wide_mem, "spm-wide");
 
+    // Probe pcie-axi-bar-mem
+    probe_node(pdev, dev_data, &dev_data->pcie_axi_bar_mem, "pcie-axi-bar-mem");
+
     // Add hardware details to information buffer
     dev_data->buffer_size +=
         sprintf(dev_data->buffer + dev_data->buffer_size,
