@@ -17,6 +17,7 @@
 #include <linux/fs.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmapool.h>
+#include <linux/log2.h>
 
 #include "occamy_driver.h"
 #include "occamy.h"
@@ -154,9 +155,9 @@ static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg_us
     case IOCTL_DMA_ALLOC: {
         dma_addr_t result_phys = 0;
         void *result_virt = 0;
-        printk("dma_alloc_coherent %p, %llx (%llx pages)\n", &cardev_data->pdev->dev, arg.size, 1 << (ALIGN(arg.size, PAGE_SIZE)/PAGE_SIZE));
+        printk("dma_alloc_coherent %p, %llx (%llx pages)\n", &cardev_data->pdev->dev, arg.size, 1 << order_base_2(ALIGN(arg.size, PAGE_SIZE)/PAGE_SIZE));
         // Alloc memory region (note PHY address = DMA address), issue with dma_alloc_coherent on milk-v
-        result_virt = __get_free_pages(GFP_KERNEL | GFP_DMA32, 1 << (ALIGN(arg.size, PAGE_SIZE)/PAGE_SIZE));
+        result_virt = __get_free_pages(GFP_KERNEL | GFP_DMA32, order_base_2(ALIGN(arg.size, PAGE_SIZE)/PAGE_SIZE));
         result_phys = virt_to_phys(result_virt);
         printk("dma_alloc_coherent returns %llx %llx\n", result_virt, result_phys);
         if (!result_virt)
