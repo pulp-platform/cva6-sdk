@@ -18,7 +18,7 @@ ARCH := riscv
 
 # Linux compilation arguments
 obj-m := carfield_driver.o
-ccflags-y += ${CFLAGS} -O2 -DDEBUG
+ccflags-y += ${CFLAGS} -O2
 
 .PHONY: all dis clean build
 

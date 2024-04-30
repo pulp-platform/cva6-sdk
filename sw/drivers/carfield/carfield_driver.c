@@ -528,8 +528,6 @@ int card_platform_driver_probe(struct platform_device *pdev) {
 
     // Probe gpio and activate rising edge interrupts
     probe_node(pdev, dev_data, &dev_data->gpio_mem, "gpio");
-    *((uint32_t *)(dev_data->gpio_mem.vbase + 0x04)) = (uint32_t)0xffffffff;
-    *((uint32_t *)(dev_data->gpio_mem.vbase + 0x34)) = (uint32_t)0xffffffff;
 
     // Request gpio irqs
     // TODO: Do not do that if running on PCIe host
@@ -541,7 +539,11 @@ int card_platform_driver_probe(struct platform_device *pdev) {
                           pdev);
         if (ret)
             pr_err("Request gpio irq %i failed with: %i\n", i, ret);
+        pr_info("Request gpio irq %i (%i) : %i\n", i, irq, ret);
     }
+
+    *((uint32_t *)(dev_data->gpio_mem.vbase + 0x04)) = (uint32_t)0x0000000c;
+    *((uint32_t *)(dev_data->gpio_mem.vbase + 0x34)) = (uint32_t)0x0000000c;
 
     // Deisolate all islands
     for (i = ISOLATE_BEGIN_OFFSET; i < ISOLATE_END_OFFSET; i += 4)
