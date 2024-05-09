@@ -71,7 +71,7 @@ int card_open(struct inode *inode, struct file *filp) {
 }
 
 int card_release(struct inode *inode, struct file *filp) {
-    // pr_info("release was successful \n");
+    // pr_debug("release was successful \n");
     return 0;
 }
 
@@ -104,7 +104,7 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
         break;
     case DMA_BUFS_MMAP_ID:
         strncpy(type, "buffer", sizeof(type));
-        pr_info("Ready to map latest buffer\n");
+        pr_debug("Ready to map latest buffer\n");
         bufs_tail =
             list_last_entry(&cardev_data->test_head, struct k_list, list);
         mapoffset = bufs_tail->data->pbase;
@@ -127,14 +127,14 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
     vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
     vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 
-    pr_info("%s mmap: phys: %#lx, virt: %#lx vsize: %#lx psize: %#lx\n", type,
+    pr_debug("%s mmap: phys: %#lx, virt: %#lx vsize: %#lx psize: %#lx\n", type,
             mapoffset, vma->vm_start, vsize, psize);
 
     ret = remap_pfn_range(vma, vma->vm_start, mapoffset >> PAGE_SHIFT, vsize,
                           vma->vm_page_prot);
 
     if (ret)
-        pr_info("mmap error: %d\n", ret);
+        pr_debug("mmap error: %d\n", ret);
 
     return ret;
 }
@@ -179,17 +179,17 @@ static long card_ioctl(struct file *file, unsigned int cmd, unsigned long arg_us
         list_add_tail(&new->list, &cardev_data->test_head);
 
         // Print the buffer list for debug
-        pr_info("Reading list :\n");
+        pr_debug("Reading list :\n");
         struct list_head *p;
         struct k_list *my;
         list_for_each(p, &cardev_data->test_head) {
             my = list_entry(p, struct k_list, list);
-            pr_info("pbase = %#llx, psize = %#llx\n", my->data->pbase, my->data->size);
+            pr_debug("pbase = %#llx, psize = %#llx\n", my->data->pbase, my->data->size);
         }
         break;
     }
     case IOCTL_MEM_INFOS: {
-        pr_info("Lookup %i\n", arg.mmap_id);
+        pr_debug("Lookup %i\n", arg.mmap_id);
         struct shared_mem *requested_mem;
         PTR_TO_DEVDATA_REGION(requested_mem, cardev_data, arg.mmap_id)
         // TODO differenciate errors from uninitialized memory and unknown map_id

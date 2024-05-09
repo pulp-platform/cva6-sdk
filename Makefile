@@ -109,6 +109,7 @@ $(RISCV)/uImage: $(RISCV)/Image.gz $(MKIMAGE)
 # Dtb for itb image
 $(RISCV)/occamy.dtb: 
 	@if [ -z $$OCCAMY_ROOT ]; then echo "Please set \$${OCCAMY_ROOT}"; exit 1; fi
+	#cp $(OCCAMY_ROOT)/target/fpga/bootrom/occamy.dtb $@
 	u-boot/scripts/dtc/dtc -i $(OCCAMY_ROOT)/target/fpga/bootrom -I dts $(OCCAMY_ROOT)/target/fpga/bootrom/occamy.dts -o $(RISCV)/occamy.dtb
 	u-boot/scripts/dtc/dtc -I dtb $(RISCV)/occamy.dtb -O dts -o $(RISCV)/occamy.dtb.dump
 

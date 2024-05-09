@@ -1,0 +1,7 @@
+insmod /root/occamy.ko
+chmod 777 /dev/occamydev--1
+mkdir /home
+chmod 755 /home
+adduser -D hero
+su hero -c "mkdir -p ~/.ssh && echo \"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCizrgIKp3o+u2S7NF6MOEmHE3OqXvYA+TUu7sZ3seZD0RczCEwKQHNA0ncFu8LRGwWIvVr1GDQpM1xZDgd32jkteYUF0yd+vugNdkrYvH1N8aHM3SZvrSGcFezWi4Cb86OMrS/40sTo9z1XeS1qT3UyvclcJKRt9Ya9FpIPnQ7DZyEsCp+wO8x23qwdQHEvQxOCNYM5iOxcXIfAQO/tqMK7wfCvc2jOhhnrMkluOM+EVftEtc45cpTwfU0fogbpbMcuyTuSgQsZCaimMTfYOupPrPuLaiR78lBlfqF/+FYSn6JG6p9cQc09/P7Zq+zo0lVoEEsAdNYXNVM1+cMoGZt soc_master@tardis-a15\" > .ssh/authorized_keys"
+echo 'Done'

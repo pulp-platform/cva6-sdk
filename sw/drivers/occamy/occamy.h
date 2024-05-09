@@ -62,6 +62,6 @@ extern struct file_operations card_fops;
 // Memmap macro
 #define MAP_DEVICE_REGION(NAME, MEM_ENTRY)                                     \
     strncpy(type, #NAME, sizeof(type));                                        \
-    pr_info("Ready to map " #NAME);                                            \
+    pr_debug("Ready to map " #NAME);                                            \
     mapoffset = cardev_data->MEM_ENTRY.pbase;                                  \
     psize = cardev_data->MEM_ENTRY.size;

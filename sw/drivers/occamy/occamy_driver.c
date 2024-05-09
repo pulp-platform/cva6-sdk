@@ -71,7 +71,7 @@ int probe_node(struct platform_device *pdev,
                     dev_data->buffer + dev_data->buffer_size, "%s: %px size = %x\n",
                     tmp_mem_np->name, dev_data->l3_mem.pbase, dev_data->l3_mem.size);
             }
-            pr_info("Found reserved mem\n");
+            pr_debug("Found reserved mem\n");
         }
 
         // Get addresses, remap them and save them to the struct shared_mem
@@ -83,10 +83,10 @@ int probe_node(struct platform_device *pdev,
         } else {
             result->pbase = tmp_res.start;
             result->size = resource_size(&tmp_res);
-            pr_info("Allocated %s io-region (%llx %llx -> %llx)\n", name, result->pbase, result->size, result->vbase);
+            pr_debug("Allocated %s io-region (%llx %llx -> %llx)\n", name, result->pbase, result->size, result->vbase);
             // Try to access the first address
-            pr_info("Probing %s : (%llx)\n", name, (uint32_t *)result->vbase);
-            pr_info(" %x\n", *((uint32_t *)result->vbase));
+            pr_debug("Probing %s : (%llx)\n", name, (uint32_t *)result->vbase);
+            pr_debug(" %x\n", *((uint32_t *)result->vbase));
             if (*((uint32_t *)result->vbase) == 0xbadcab1e) {
                 pr_warn("%s not found in hardware (0xbadcab1e)!\n", name);
                 *result = (struct shared_mem) { 0 };
@@ -113,22 +113,22 @@ int card_platform_driver_probe(struct platform_device *pdev) {
     int ret, irq, i;
     struct cardev_private_data *dev_data;
 
-    pr_info("A device is detected \n");
+    pr_debug("A device is detected \n");
 
     // Memory managed and zero initialized alloc
     dev_data = devm_kzalloc(&pdev->dev, sizeof(*dev_data), GFP_KERNEL);
     if (!dev_data) {
-        pr_info("Cannot allocate memory \n");
+        pr_debug("Cannot allocate memory \n");
         return -ENOMEM;
     }
 
     // Save the device private data pointer in platform device structure
     dev_set_drvdata(&pdev->dev, dev_data);
 
-    pr_info("Device size = %d\n", PDATA_SIZE);
-    pr_info("Device permission = %d\n", PDATA_PERM);
-    pr_info("Device serial number = %s\n", PDATA_SERIAL);
-    pr_info("platform_device(%p) : name=%s ; id=%i ; id_auto=%i ; dev=%p(%s) ; "
+    pr_debug("Device size = %d\n", PDATA_SIZE);
+    pr_debug("Device permission = %d\n", PDATA_PERM);
+    pr_debug("Device serial number = %s\n", PDATA_SERIAL);
+    pr_debug("platform_device(%p) : name=%s ; id=%i ; id_auto=%i ; dev=%p(%s) ; "
             "num_ressources=%i ; id_entry=%p\n",
             pdev, pdev->name, pdev->id, pdev->id_auto, pdev->dev,
             pdev->dev.init_name, pdev->num_resources, pdev->id_entry);
@@ -137,7 +137,7 @@ int card_platform_driver_probe(struct platform_device *pdev) {
      * from the platform data */
     dev_data->buffer = devm_kzalloc(&pdev->dev, PDATA_SIZE, GFP_KERNEL);
     if (!dev_data->buffer) {
-        pr_info("Cannot allocate memory \n");
+        pr_debug("Cannot allocate memory \n");
         return -ENOMEM;
     }
 
@@ -193,7 +193,7 @@ int card_platform_driver_probe(struct platform_device *pdev) {
 
     cardrv_data.total_devices++;
 
-    pr_info("Probe was successful \n");
+    pr_debug("Probe was successful \n");
 
     return 0;
 }
@@ -210,7 +210,7 @@ int card_platform_driver_remove(struct platform_device *pdev) {
 
     cardrv_data.total_devices--;
 
-    pr_info("A device is removed \n");
+    pr_debug("A device is removed \n");
 
     return 0;
 }
@@ -250,7 +250,7 @@ static int __init card_platform_driver_init(void) {
 
     platform_driver_register(&card_platform_driver);
 
-    pr_info("card platform driver loaded \n");
+    pr_debug("card platform driver loaded \n");
 
     return 0;
 }
@@ -265,7 +265,7 @@ static void __exit card_platform_driver_cleanup(void) {
     // Unregister device numbers for MAX_DEVICES
     unregister_chrdev_region(cardrv_data.device_num_base, MAX_DEVICES);
 
-    pr_info("card platform driver unloaded \n");
+    pr_debug("card platform driver unloaded \n");
 }
 
 module_init(card_platform_driver_init);
