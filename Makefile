@@ -1,83 +1,17 @@
-# Makefile for RISC-V toolchain; run 'make help' for usage. set XLEN here to 32 or 64.
+# Copyright 2022 ETH Zurich and University of Bologna.
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Robert Balas <balasr@iis.ee.ethz.ch>
 
-XLEN     := 64
-ROOT     := $(patsubst %/,%, $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-RISCV    := $(ROOT)/install$(XLEN)
-DEST     := $(abspath $(RISCV))
-PATH     := $(DEST)/bin:$(PATH)
-GZIP_BIN ?= gzip
+DTC = dtc
 
-TOOLCHAIN_PREFIX := $(ROOT)/buildroot/output/host/bin/riscv$(XLEN)-buildroot-linux-gnu-
-CC          := $(TOOLCHAIN_PREFIX)gcc
-OBJCOPY     := $(TOOLCHAIN_PREFIX)objcopy
-MKIMAGE     := u-boot/tools/mkimage
+%.dtb: %.dts
+	$(DTC) -o $@ $^
 
-NR_CORES := $(shell nproc)
-
-# SBI options
-PLATFORM := fpga/cheshire
-FW_FDT_PATH ?=
-sbi-mk = PLATFORM=$(PLATFORM) CROSS_COMPILE=$(TOOLCHAIN_PREFIX) $(if $(FW_FDT_PATH),FW_FDT_PATH=$(FW_FDT_PATH),)
-ifeq ($(XLEN), 32)
-sbi-mk += PLATFORM_RISCV_ISA=rv32ima PLATFORM_RISCV_XLEN=32
-else
-sbi-mk += PLATFORM_RISCV_ISA=rv64imafdc PLATFORM_RISCV_XLEN=64
-endif
-
-# U-Boot options
-ifeq ($(XLEN), 32)
-UIMAGE_LOAD_ADDRESS := 0x80400000
-UIMAGE_ENTRY_POINT  := 0x80400000
-else
-UIMAGE_LOAD_ADDRESS := 0x80200000
-UIMAGE_ENTRY_POINT  := 0x80200000
-endif
-
-# default configure flags
-tests-co              = --prefix=$(RISCV)/target
-
-# specific flags and rules for 32 / 64 version
-ifeq ($(XLEN), 32)
-isa-sim-co            = --prefix=$(RISCV) --with-isa=RV32IMA --with-priv=MSU
-else
-isa-sim-co            = --prefix=$(RISCV)
-endif
-
-# default make flags
-isa-sim-mk              = -j$(NR_CORES)
-tests-mk         		= -j$(NR_CORES)
-buildroot-mk       		= -j$(NR_CORES)
-
-# linux image
-buildroot_defconfig = configs/buildroot$(XLEN)_defconfig
-linux_defconfig = configs/linux$(XLEN)_defconfig
-busybox_defconfig = configs/busybox$(XLEN).config
-
-install-dir:
-	mkdir -p $(RISCV)
-
-isa-sim: install-dir $(CC) 
-	mkdir -p riscv-isa-sim/build
-	cd riscv-isa-sim/build;\
-	../configure $(isa-sim-co);\
-	make $(isa-sim-mk);\
-	make install;\
-	cd $(ROOT)
-
-tests: install-dir $(CC)
-	mkdir -p riscv-tests/build
-	cd riscv-tests/build;\
-	autoconf;\
-	../configure $(tests-co);\
-	make $(tests-mk);\
-	make install;\
-	cd $(ROOT)
-
-$(CC): $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig)
-	make -C buildroot defconfig BR2_DEFCONFIG=../$(buildroot_defconfig)
-	make -C buildroot host-gcc-final $(buildroot-mk)
-
-all: $(CC) isa-sim
+.PHONY: setup
+setup: target/cheshire/cheshire.dtb
+	$(MAKE) -C buildroot BR2_EXTERNAL=.. cheshire_defconfig
 
 
 $(RISCV)/vmlinux: $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig) $(CC)
