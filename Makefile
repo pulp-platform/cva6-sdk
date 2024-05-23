@@ -19,4 +19,5 @@ clean-buildroot:
 	$(MAKE) -C buildroot clean
 
 .PHONY: clean-all
-clean-all: clean-buildroot
+clean: clean-buildroot
+	$(RM) target/cheshire/*.dtb
