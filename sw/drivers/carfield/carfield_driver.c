@@ -217,7 +217,7 @@ int card_mmap(struct file *filp, struct vm_area_struct *vma) {
     }
 
     // set protection flags to avoid caching and paging
-    vma->vm_flags |= VM_IO | VM_RESERVED;
+    vm_flags_set(vma, VM_IO | VM_RESERVED);
     vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 
     pr_debug("%s mmap: phys: %#lx, virt: %#lx vsize: %#lx psize: %#lx\n", type,
@@ -617,7 +617,7 @@ static int __init card_platform_driver_init(void) {
     }
 
     // Create a device class under /sys/class
-    cardrv_data.class_card = class_create(THIS_MODULE, "card_class");
+    cardrv_data.class_card = class_create("card_class");
     if (IS_ERR(cardrv_data.class_card)) {
         pr_err("Class creation failed \n");
         ret = PTR_ERR(cardrv_data.class_card);
