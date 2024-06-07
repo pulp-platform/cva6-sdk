@@ -9,7 +9,7 @@ PLATFORM ?= BUILDROOT
 BR_OUTPUT_DIR ?= $(realpath ../../../buildroot/output/)
 
 KERNEL_DIR_NATIVE := /lib/modules/$(shell uname -r)/build
-KERNEL_DIR_BUILDROOT := $(BR_OUTPUT_DIR)/build/linux-6.1.22
+KERNEL_DIR_BUILDROOT := $(BR_OUTPUT_DIR)/build/linux-riscv_iommu_v6
 
 CROSS_COMPILE_NATIVE ?=
 CROSS_COMPILE_BUILDROOT ?= $(BR_OUTPUT_DIR)/host/bin/riscv64-buildroot-linux-gnu-
