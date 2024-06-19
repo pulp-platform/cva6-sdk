@@ -77,9 +77,9 @@ $(CC): $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig)
 	make -C buildroot defconfig BR2_DEFCONFIG=../$(buildroot_defconfig)
 	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk) > /dev/null
 	# Prepare future relocation (example HERO CI)
-	make -C buildroot host-patchelf
-	echo `realpath buildroot/output/host` > buildroot/output/host/share/buildroot/sdk-location
-	cd buildroot && HOST_DIR=`realpath output/host` STAGING_DIR=`realpath output/host/riscv64-buildroot-linux-gnu/sysroot` TARGET_DIR=`realpath output/target` PER_PACKAGE_DIR=`pwd`/per-package ./support/scripts/fix-rpath host
+	# make -C buildroot host-patchelf
+	# echo `realpath buildroot/output/host` > buildroot/output/host/share/buildroot/sdk-location
+	# cd buildroot && HOST_DIR=`realpath output/host` STAGING_DIR=`realpath output/host/riscv64-buildroot-linux-gnu/sysroot` TARGET_DIR=`realpath output/target` PER_PACKAGE_DIR=`pwd`/per-package ./support/scripts/fix-rpath host
 
 all: $(CC)
 
@@ -169,10 +169,10 @@ fw_payload.bin: $(RISCV)/fw_payload.bin
 uImage: $(RISCV)/uImage
 spike_payload: $(RISCV)/spike_fw_payload.elf
 
-images: $(CC) rootfs/root/carfield_driver.ko $(RISCV)/fw_payload.bin $(RISCV)/uImage
+images: $(CC) $(RISCV)/fw_payload.bin $(RISCV)/uImage
 
 clean:
-	rm -f rootfs/root/*.ko rootfs/root/tests/*.app
+	rm -f rootfs/root/carfield_driver.ko rootfs/root/tests/*.app
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
 	rm -rf $(RISCV)/fw_payload.bin $(RISCV)/uImage $(RISCV)/Image.gz
 	make -C u-boot clean
