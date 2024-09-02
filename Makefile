@@ -14,7 +14,7 @@ MKIMAGE     := u-boot/tools/mkimage
 
 NR_CORES := $(shell nproc)
 
-ifdef $(RVV)
+ifdef RVV
 	sbi-march=rv64imafdc_zifencei
 else
 	sbi-march=rv64imafdc
@@ -59,7 +59,7 @@ buildroot-mk       		= -j$(NR_CORES) \
 							HOSTCPP=cpp-11.2.0
 
 # linux image
-ifdef $(RVV)
+ifdef RVV
 	buildroot_defconfig = configs/buildroot$(XLEN)_V_defconfig
 	linux_defconfig = configs/linux$(XLEN)_V_defconfig
 else
