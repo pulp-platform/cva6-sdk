@@ -14,6 +14,13 @@ MKIMAGE     := u-boot/tools/mkimage
 
 NR_CORES := $(shell nproc)
 
+ifdef $(RVV)
+	sbi-march=rv64imafdc_zifencei
+else
+	sbi-march=rv64imafdc
+endif
+
+
 # SBI options
 PLATFORM := fpga/cheshire
 FW_FDT_PATH ?=
@@ -21,7 +28,7 @@ sbi-mk = PLATFORM=$(PLATFORM) CROSS_COMPILE=$(TOOLCHAIN_PREFIX) $(if $(FW_FDT_PA
 ifeq ($(XLEN), 32)
 sbi-mk += PLATFORM_RISCV_ISA=rv32ima PLATFORM_RISCV_XLEN=32
 else
-sbi-mk += PLATFORM_RISCV_ISA=rv64imafdc PLATFORM_RISCV_XLEN=64
+sbi-mk += PLATFORM_RISCV_ISA=$(sbi-march) PLATFORM_RISCV_XLEN=64
 endif
 
 # U-Boot options
@@ -46,11 +53,19 @@ endif
 # default make flags
 isa-sim-mk              = -j$(NR_CORES)
 tests-mk         		= -j$(NR_CORES)
-buildroot-mk       		= -j$(NR_CORES)
+buildroot-mk       		= -j$(NR_CORES) \
+							HOSTCC=gcc-11.2.0 \
+							HOSTCXX=g++-11.2.0 \
+							HOSTCPP=cpp-11.2.0
 
 # linux image
-buildroot_defconfig = configs/buildroot$(XLEN)_defconfig
-linux_defconfig = configs/linux$(XLEN)_defconfig
+ifdef $(RVV)
+	buildroot_defconfig = configs/buildroot$(XLEN)_V_defconfig
+	linux_defconfig = configs/linux$(XLEN)_V_defconfig
+else
+	buildroot_defconfig = configs/buildroot$(XLEN)_defconfig
+	linux_defconfig = configs/linux$(XLEN)_defconfig
+endif
 busybox_defconfig = configs/busybox$(XLEN).config
 
 install-dir:
