@@ -1,6 +1,7 @@
 # Makefile for RISC-V toolchain; run 'make help' for usage. set XLEN here to 32 or 64.
 
 XLEN     := 64
+RVV      ?= 0
 ROOT     := $(patsubst %/,%, $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 RISCV    := $(ROOT)/install$(XLEN)
 DEST     := $(abspath $(RISCV))
@@ -14,7 +15,7 @@ MKIMAGE     := u-boot/tools/mkimage
 
 NR_CORES := $(shell nproc)
 
-ifdef RVV
+ifeq ($(RVV), 1)
 	sbi-march=rv64imafdc_zifencei
 else
 	sbi-march=rv64imafdc
@@ -53,13 +54,10 @@ endif
 # default make flags
 isa-sim-mk              = -j$(NR_CORES)
 tests-mk         		= -j$(NR_CORES)
-buildroot-mk       		= -j$(NR_CORES) \
-							HOSTCC=gcc-11.2.0 \
-							HOSTCXX=g++-11.2.0 \
-							HOSTCPP=cpp-11.2.0
+buildroot-mk       		= -j$(NR_CORES)
 
 # linux image
-ifdef RVV
+ifeq ($(RVV), 1)
 	buildroot_defconfig = configs/buildroot$(XLEN)_V_defconfig
 	linux_defconfig = configs/linux$(XLEN)_V_defconfig
 else
@@ -100,7 +98,7 @@ rootfs/cachetest.elf: $(CC)
 	cp ./cachetest/cachetest.elf $@
 
 # cool command-line tetris
-ifndef RVV
+ifneq ($(RVV), 1)
 rootfs/tetris: $(CC)
 	cd ./vitetris/ && make clean && ./configure CC=$(CC) && make
 	cp ./vitetris/tetris $@
