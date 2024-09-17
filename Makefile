@@ -100,9 +100,15 @@ rootfs/cachetest.elf: $(CC)
 	cp ./cachetest/cachetest.elf $@
 
 # cool command-line tetris
+ifndef RVV
 rootfs/tetris: $(CC)
 	cd ./vitetris/ && make clean && ./configure CC=$(CC) && make
 	cp ./vitetris/tetris $@
+else
+rootfs/tetris: $(CC)
+	touch rootfs/tetris
+endif
+
 
 $(RISCV)/vmlinux: $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig) $(CC) rootfs/cachetest.elf rootfs/tetris
 	mkdir -p $(RISCV)
