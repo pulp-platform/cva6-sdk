@@ -89,7 +89,14 @@ rootfs/tetris: $(CC)
 	cd ./vitetris/ && make clean && ./configure CC=$(CC) && make
 	cp ./vitetris/tetris $@
 
-$(RISCV)/vmlinux: $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig) $(CC) rootfs/cachetest.elf rootfs/tetris
+# splash-3 benchmarks
+rootfs/perf: $(CC)
+	make -C Splash-3/codes all
+	mkdir -p $@
+	cp -r Splash-3/codes/splash3 $@/splash3
+	cp -r Splash-3/codes/kernels $@/splash3/codes
+
+$(RISCV)/vmlinux: $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig) $(CC) rootfs/cachetest.elf rootfs/tetris rootfs/perf
 	mkdir -p $(RISCV)
 	make -C buildroot $(buildroot-mk)
 	cp buildroot/output/images/vmlinux $@

@@ -18,3 +18,6 @@
 [submodule "opensbi"]
 	path = opensbi
 	url = https://github.com/pulp-platform/opensbi
+[submodule "Splash-3"]
+	path = Splash-3
+	url = https://github.com/ricted98/Splash-3.git
