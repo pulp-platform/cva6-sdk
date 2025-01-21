@@ -6,7 +6,7 @@ CONFIG_INITRAMFS_SOURCE="${BR_BINARIES_DIR}/rootfs.cpio"
 CONFIG_EMBEDDED=y
 CONFIG_SMP=y
 CONFIG_HZ_100=y
-CONFIG_CMDLINE="console=ttyS0,115200 earlyprintk earlycon debug loglevel=8 dyndbg='file drivers/base/core.c +p; file drivers/of/* +p; file drivers/iommu/* +p; file drivers/irqchip/* +p; file drivers/iommu/riscv/* +p'"
+CONFIG_CMDLINE="console=ttyS0,38400 earlyprintk earlycon debug loglevel=8 dyndbg='file drivers/base/core.c +p; file drivers/of/* +p; file drivers/iommu/* +p; file drivers/irqchip/* +p; file drivers/iommu/riscv/* +p'"
 CONFIG_MODULES=y
 CONFIG_MODULE_UNLOAD=y
 CONFIG_MODULE_FORCE_UNLOAD=y
