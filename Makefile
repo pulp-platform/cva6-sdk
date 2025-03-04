@@ -117,7 +117,7 @@ $(MKIMAGE) u-boot/u-boot.bin: $(CC)
 	make -C u-boot -j16 CROSS_COMPILE=$(TOOLCHAIN_PREFIX)
 
 # OpenSBI with u-boot as payload
-$(RISCV)/fw_payload.bin: $(RISCV)/u-boot.bin
+$(RISCV)/fw_payload.bin: $(RISCV)/Image #$(RISCV)/u-boot.bin
 	make -C opensbi -j16 FW_PAYLOAD_PATH=$< $(sbi-mk)
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf $(RISCV)/fw_payload.elf
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/fw_payload.bin
