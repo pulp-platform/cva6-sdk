@@ -1,0 +1,81 @@
+diff --git a/arch/riscv/lib/bootm.c b/arch/riscv/lib/bootm.c
+index 8dd1820540..80f1fe5df9 100644
+--- a/arch/riscv/lib/bootm.c
++++ b/arch/riscv/lib/bootm.c
+@@ -103,6 +103,7 @@ static void boot_jump_linux(bootm_headers_t *images, int flag)
+ 			if (ret)
+ 				hang();
+ #endif
++			cache_flush();
+ 			kernel(gd->arch.boot_hart, images->ft_addr);
+ 		}
+ 	}
+diff --git a/arch/riscv/lib/cache.c b/arch/riscv/lib/cache.c
+index b1d42bcc2b..1bb7e4bd2c 100644
+--- a/arch/riscv/lib/cache.c
++++ b/arch/riscv/lib/cache.c
+@@ -6,13 +6,16 @@
+ 
+ #include <common.h>
+ #include <cpu_func.h>
++#include <asm/encoding.h>
++#include <asm/sbi.h>
++#define CSR_MCOR		0x7c2
+ 
+-void invalidate_icache_all(void)
++__weak void invalidate_icache_all(void) // it is defined in board/pulp-platform/cheshire/cheshire.c
+ {
+ 	asm volatile ("fence.i" ::: "memory");
+ }
+ 
+-__weak void flush_dcache_all(void)
++__weak void flush_dcache_all(void) // it is defined in board/pulp-platform/cheshire/cheshire.c
+ {
+ }
+ 
+@@ -35,8 +38,9 @@ __weak void invalidate_dcache_range(unsigned long start, unsigned long end)
+ 
+ void cache_flush(void)
+ {
+-	invalidate_icache_all();
+ 	flush_dcache_all();
++	invalidate_icache_all();
++	asm volatile(".word 0x01b0000b"); // sync.is
+ }
+ 
+ void flush_cache(unsigned long addr, unsigned long size)
+diff --git a/board/pulp-platform/cheshire/cheshire.c b/board/pulp-platform/cheshire/cheshire.c
+index a44cc85ac7..b7d9766738 100644
+--- a/board/pulp-platform/cheshire/cheshire.c
++++ b/board/pulp-platform/cheshire/cheshire.c
+@@ -1,8 +1,30 @@
+ #include <init.h>
++#include <asm/encoding.h>
+ 
+ #define CHESHIRE_AXI_LLC_ADDR 0x03001000
++#define CSR_MCOR		0x7c2
++
++void flush_dcache_all(void)
++{
++  csr_clear(CSR_MCOR, 0x33); // mcor reset
++	csr_set  (CSR_MCOR, 0x22); // mcor dcache clr
++  asm volatile(".word 0x0190000b"); // sync.s
++}
++
++void flush_dcache_range(unsigned long start, unsigned long end)
++{
++	flush_dcache_all();
++}
++
++void invalidate_icache_all(void)
++{
++	csr_clear(CSR_MCOR, 0x33); // mcor reset
++	csr_set  (CSR_MCOR, 0x11); // mcor icache inv
++}
+ 
+ int board_init(void) {
++  invalidate_icache_all();
++  flush_dcache_all();
+   //volatile unsigned int *axi_llc = (volatile unsigned int *) CHESHIRE_AXI_LLC_ADDR;
+   // Configure the LLC fully as cache
+   // CFG_SPM_LOW = 0x0

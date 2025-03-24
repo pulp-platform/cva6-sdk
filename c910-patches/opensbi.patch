@@ -1,0 +1,85 @@
+diff --git a/lib/sbi/sbi_tlb.c b/lib/sbi/sbi_tlb.c
+index 4c142ea..2552902 100644
+--- a/lib/sbi/sbi_tlb.c
++++ b/lib/sbi/sbi_tlb.c
+@@ -22,6 +22,8 @@
+ #include <sbi/sbi_console.h>
+ #include <sbi/sbi_platform.h>
+ #include <sbi/sbi_pmu.h>
++#define CSR_SMCIR		0x9c3
++#define CSR_MCOR		0x7c2
+ 
+ static unsigned long tlb_sync_off;
+ static unsigned long tlb_fifo_off;
+@@ -30,7 +32,7 @@ static unsigned long tlb_range_flush_limit;
+ 
+ static void tlb_flush_all(void)
+ {
+-	__asm__ __volatile("sfence.vma");
++	csr_write(CSR_SMCIR, 1 << 26);
+ }
+ 
+ void sbi_tlb_local_hfence_vvma(struct sbi_tlb_info *tinfo)
+@@ -80,7 +82,6 @@ void sbi_tlb_local_sfence_vma(struct sbi_tlb_info *tinfo)
+ {
+ 	unsigned long start = tinfo->start;
+ 	unsigned long size  = tinfo->size;
+-	unsigned long i;
+ 
+ 	sbi_pmu_ctr_incr_fw(SBI_PMU_FW_SFENCE_VMA_RCVD);
+ 
+@@ -89,12 +90,7 @@ void sbi_tlb_local_sfence_vma(struct sbi_tlb_info *tinfo)
+ 		return;
+ 	}
+ 
+-	for (i = 0; i < size; i += PAGE_SIZE) {
+-		__asm__ __volatile__("sfence.vma %0"
+-				     :
+-				     : "r"(start + i)
+-				     : "memory");
+-	}
++	csr_write(CSR_SMCIR, 1 << 26);
+ }
+ 
+ void sbi_tlb_local_hfence_vvma_asid(struct sbi_tlb_info *tinfo)
+@@ -156,8 +152,6 @@ void sbi_tlb_local_sfence_vma_asid(struct sbi_tlb_info *tinfo)
+ {
+ 	unsigned long start = tinfo->start;
+ 	unsigned long size  = tinfo->size;
+-	unsigned long asid  = tinfo->asid;
+-	unsigned long i;
+ 
+ 	sbi_pmu_ctr_incr_fw(SBI_PMU_FW_SFENCE_VMA_ASID_RCVD);
+ 
+@@ -168,18 +162,9 @@ void sbi_tlb_local_sfence_vma_asid(struct sbi_tlb_info *tinfo)
+ 
+ 	/* Flush entire MM context for a given ASID */
+ 	if (size == SBI_TLB_FLUSH_ALL) {
+-		__asm__ __volatile__("sfence.vma x0, %0"
+-				     :
+-				     : "r"(asid)
+-				     : "memory");
+-		return;
+-	}
+-
+-	for (i = 0; i < size; i += PAGE_SIZE) {
+-		__asm__ __volatile__("sfence.vma %0, %1"
+-				     :
+-				     : "r"(start + i), "r"(asid)
+-				     : "memory");
++		csr_write(CSR_SMCIR, 1 << 26);
++	} else {
++		csr_write(CSR_SMCIR, 1 << 26);
+ 	}
+ }
+ 
+@@ -188,6 +173,9 @@ void sbi_tlb_local_fence_i(struct sbi_tlb_info *tinfo)
+ 	sbi_pmu_ctr_incr_fw(SBI_PMU_FW_FENCE_I_RECVD);
+ 
+ 	__asm__ __volatile("fence.i");
++	csr_clear(CSR_MCOR, 0x33); // mcor reset
++	csr_set  (CSR_MCOR, 0x11); // mcor icache inv
++	asm volatile(".word 0x01b0000b"); // sync.is
+ }
+ 
+ static void tlb_pmu_incr_fw_ctr(struct sbi_tlb_info *data)

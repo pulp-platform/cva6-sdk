@@ -1,0 +1,95 @@
+From d562f5674fad9b94b10c79dfb465744ed8ae1290 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Mon, 24 Feb 2025 20:34:39 +0100
+Subject: [PATCH] [C910] Add cache and tlb flush instructions that comply with
+ the C910 specification.
+
+---
+ arch/riscv/include/asm/cacheflush.h | 4 ++++
+ arch/riscv/include/asm/tlbflush.h   | 6 ++++--
+ arch/riscv/kernel/head.S            | 2 ++
+ arch/riscv/mm/init.c                | 4 ++++
+ 4 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/arch/riscv/include/asm/cacheflush.h b/arch/riscv/include/asm/cacheflush.h
+index 23ff70350992..d561967f24dc 100644
+--- a/arch/riscv/include/asm/cacheflush.h
++++ b/arch/riscv/include/asm/cacheflush.h
+@@ -7,10 +7,14 @@
+ #define _ASM_RISCV_CACHEFLUSH_H
+ 
+ #include <linux/mm.h>
++#define CSR_MCOR		0x7c2
+ 
+ static inline void local_flush_icache_all(void)
+ {
+ 	asm volatile ("fence.i" ::: "memory");
++	csr_clear(CSR_MCOR, 0x33); // mcor reset
++	csr_set  (CSR_MCOR, 0x11); // mcor icache inv
++	asm volatile(".word 0x01b0000b"); // sync.is
+ }
+ 
+ #define PG_dcache_clean PG_arch_1
+diff --git a/arch/riscv/include/asm/tlbflush.h b/arch/riscv/include/asm/tlbflush.h
+index 394cfbccdcd9..776e781f6bde 100644
+--- a/arch/riscv/include/asm/tlbflush.h
++++ b/arch/riscv/include/asm/tlbflush.h
+@@ -10,16 +10,18 @@
+ #include <linux/mm_types.h>
+ #include <asm/smp.h>
+ 
++#define CSR_SMCIR		0x9c3
++
+ #ifdef CONFIG_MMU
+ static inline void local_flush_tlb_all(void)
+ {
+-	__asm__ __volatile__ ("sfence.vma" : : : "memory");
++	csr_write(CSR_SMCIR, 1 << 26);
+ }
+ 
+ /* Flush one page from local TLB */
+ static inline void local_flush_tlb_page(unsigned long addr)
+ {
+-	__asm__ __volatile__ ("sfence.vma %0" : : "r" (addr) : "memory");
++	csr_write(CSR_SMCIR, 1 << 26);
+ }
+ #else /* CONFIG_MMU */
+ #define local_flush_tlb_all()			do { } while (0)
+diff --git a/arch/riscv/kernel/head.S b/arch/riscv/kernel/head.S
+index 7e849797c9c3..eb6218ebc706 100644
+--- a/arch/riscv/kernel/head.S
++++ b/arch/riscv/kernel/head.S
+@@ -184,6 +184,8 @@ END(_start)
+ 
+ 	__INIT
+ ENTRY(_start_kernel)
++	/* invalidate icache here */
++	.word 0x0100000b # icache.iall
+ 	/* Mask all interrupts */
+ 	csrw CSR_IE, zero
+ 	csrw CSR_IP, zero
+diff --git a/arch/riscv/mm/init.c b/arch/riscv/mm/init.c
+index e4133c20744c..7161d09fd9c7 100644
+--- a/arch/riscv/mm/init.c
++++ b/arch/riscv/mm/init.c
+@@ -23,6 +23,8 @@
+ 
+ #include "../kernel/head.h"
+ 
++#define CSR_MCOR		0x7c2
++
+ unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)]
+ 							__page_aligned_bss;
+ EXPORT_SYMBOL(empty_zero_page);
+@@ -586,6 +588,8 @@ static void __init setup_vm_final(void)
+ 	clear_fixmap(FIX_PMD);
+ 
+ 	/* Move to swapper page table */
++	csr_clear(CSR_MCOR, 0x33); // mcor reset
++	csr_set  (CSR_MCOR, 0x22); // mcor dcache clr
+ 	csr_write(CSR_SATP, PFN_DOWN(__pa_symbol(swapper_pg_dir)) | SATP_MODE);
+ 	local_flush_tlb_all();
+ 
+-- 
+2.39.3
+

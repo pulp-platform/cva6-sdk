@@ -159,7 +159,10 @@ fw_payload.bin: $(RISCV)/fw_payload.bin
 uImage: $(RISCV)/uImage
 spike_payload: $(RISCV)/spike_fw_payload.elf
 
-images: $(CC) $(RISCV)/fw_payload.bin $(RISCV)/uImage
+apply-patches:
+	make -C c910-patches apply-patches
+
+images: $(CC) apply-patches $(RISCV)/fw_payload.bin $(RISCV)/uImage
 
 clean:
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
@@ -170,8 +173,9 @@ clean:
 clean-all: clean
 	rm -rf $(RISCV) riscv-isa-sim/build riscv-tests/build
 	make -C buildroot clean
+	make -C c910-patches clean
 
-.PHONY: gcc vmlinux images help fw_payload.bin uImage
+.PHONY: gcc vmlinux images help fw_payload.bin uImage apply-patches
 
 help:
 	@echo "usage: $(MAKE) [tool/img] ..."

@@ -1,6 +1,6 @@
-# CVA6 SDK
+# CVA6 SDK with C910 patches
 
-This repository houses a set of RISCV tools for the [CVA6 core](https://github.com/openhwgroup/cva6). Most importantly it **does not contain openOCD**.
+This repository houses a set of RISCV tools for the [CVA6 core](https://github.com/openhwgroup/cva6). C910 patches for its submodules are stored in c910-patches folder and will be automatically applied by the Makefile. Most importantly it **does not contain openOCD**.
 
 Included tools:
 * [Spike](https://github.com/riscv/riscv-isa-sim/), the ISA simulator

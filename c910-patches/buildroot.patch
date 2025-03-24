@@ -1,0 +1,26 @@
+diff --git a/package/glibc/2.34-499-g83f223412de7eb6e838a77137fb4459075b475c1/glibc.hash b/package/glibc/2.34-499-g83f223412de7eb6e838a77137fb4459075b475c1/glibc.hash
+new file mode 100644
+index 0000000000..4c6b8a0ff3
+--- /dev/null
++++ b/package/glibc/2.34-499-g83f223412de7eb6e838a77137fb4459075b475c1/glibc.hash
+@@ -0,0 +1,7 @@
++# Locally calculated (fetched from Github)
++sha256  fb72dbce6021351b71e1ff395341a2bd9a7ccf267313612815de629c082f813f  glibc-2.34-499-g83f223412de7eb6e838a77137fb4459075b475c1.tar.gz
++
++# Hashes for license files
++sha256  8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643  COPYING
++sha256  dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551  COPYING.LIB
++sha256  b33d0bd9f685b46853548814893a6135e74430d12f6d94ab3eba42fc591f83bc  LICENSES
+diff --git a/package/glibc/glibc.mk b/package/glibc/glibc.mk
+index 1eff245588..a0824e3a5d 100644
+--- a/package/glibc/glibc.mk
++++ b/package/glibc/glibc.mk
+@@ -11,7 +11,7 @@ else
+ # Generate version string using:
+ #   git describe --match 'glibc-*' --abbrev=40 origin/release/MAJOR.MINOR/master | cut -d '-' -f 2-
+ # When updating the version, please also update localedef
+-GLIBC_VERSION = 2.33-46-gedfd11197ecf3629bbb4b66c5814da09a61a7f9f
++GLIBC_VERSION = 2.34-499-g83f223412de7eb6e838a77137fb4459075b475c1
+ # Upstream doesn't officially provide an https download link.
+ # There is one (https://sourceware.org/git/glibc.git) but it's not reliable,
+ # sometimes the connection times out. So use an unofficial github mirror.
