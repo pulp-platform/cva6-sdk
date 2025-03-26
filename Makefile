@@ -162,7 +162,7 @@ spike_payload: $(RISCV)/spike_fw_payload.elf
 apply-patches:
 	make -C c910-patches apply-patches
 
-images: $(CC) apply-patches $(RISCV)/fw_payload.bin $(RISCV)/uImage
+images: apply-patches $(CC) $(RISCV)/fw_payload.bin $(RISCV)/uImage
 
 clean:
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
