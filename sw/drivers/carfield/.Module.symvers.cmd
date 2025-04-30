@@ -1,0 +1,1 @@
+cmd_/usr/scratch/lagrev4/chaol/eth-driver/cheshire/sw/deps/cva6-sdk/sw/drivers/carfield/Module.symvers := sed 's/ko$$/o/' /usr/scratch/lagrev4/chaol/eth-driver/cheshire/sw/deps/cva6-sdk/sw/drivers/carfield/modules.order | scripts/mod/modpost     -o /usr/scratch/lagrev4/chaol/eth-driver/cheshire/sw/deps/cva6-sdk/sw/drivers/carfield/Module.symvers -e -i Module.symvers   -T -
