@@ -1,6 +1,7 @@
 # Makefile for RISC-V toolchain; run 'make help' for usage. set XLEN here to 32 or 64.
 
 XLEN     := 64
+RVV      ?= 0
 ROOT     := $(patsubst %/,%, $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 RISCV    := $(ROOT)/install$(XLEN)
 DEST     := $(abspath $(RISCV))
@@ -21,7 +22,7 @@ sbi-mk = PLATFORM=$(PLATFORM) CROSS_COMPILE=$(TOOLCHAIN_PREFIX) $(if $(FW_FDT_PA
 ifeq ($(XLEN), 32)
 sbi-mk += PLATFORM_RISCV_ISA=rv32ima PLATFORM_RISCV_XLEN=32
 else
-sbi-mk += PLATFORM_RISCV_ISA=rv64imafdc PLATFORM_RISCV_XLEN=64
+sbi-mk += PLATFORM_RISCV_ISA=rv64imafdc_zifencei PLATFORM_RISCV_XLEN=64
 endif
 
 # U-Boot options
@@ -49,14 +50,19 @@ tests-mk         		= -j$(NR_CORES)
 buildroot-mk       		= -j$(NR_CORES)
 
 # linux image
-buildroot_defconfig = configs/buildroot$(XLEN)_defconfig
-linux_defconfig = configs/linux$(XLEN)_defconfig
+ifeq ($(RVV), 1)
+	buildroot_defconfig = configs/buildroot$(XLEN)_V_defconfig
+	linux_defconfig = configs/linux$(XLEN)_V_defconfig
+else
+	buildroot_defconfig = configs/buildroot$(XLEN)_defconfig
+	linux_defconfig = configs/linux$(XLEN)_defconfig
+endif
 busybox_defconfig = configs/busybox$(XLEN).config
 
 install-dir:
 	mkdir -p $(RISCV)
 
-isa-sim: install-dir $(CC) 
+isa-sim: install-dir $(CC)
 	mkdir -p riscv-isa-sim/build
 	cd riscv-isa-sim/build;\
 	../configure $(isa-sim-co);\
@@ -85,9 +91,15 @@ rootfs/cachetest.elf: $(CC)
 	cp ./cachetest/cachetest.elf $@
 
 # cool command-line tetris
+ifneq ($(RVV), 1)
 rootfs/tetris: $(CC)
 	cd ./vitetris/ && make clean && ./configure CC=$(CC) && make
 	cp ./vitetris/tetris $@
+else
+rootfs/tetris: $(CC)
+	touch rootfs/tetris
+endif
+
 
 $(RISCV)/vmlinux: $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig) $(CC) rootfs/cachetest.elf rootfs/tetris
 	mkdir -p $(RISCV)
