@@ -15,7 +15,7 @@ APP_SYSROOT_DIR = ../../buildroot/output/host/riscv64-buildroot-linux-gnu/sysroo
 APP_CFLAGS = --sysroot=$(APP_SYSROOT_DIR) -I$(APP_SYSROOT_DIR)/usr/include -Wall -O2
 APP_LDFLAGS = --sysroot=$(APP_SYSROOT_DIR) -L$(APP_SYSROOT_DIR)/usr/lib
 
-.PHONY: all drivers apps clean
+.PHONY: all drivers apps deploy clean
 all: drivers apps
 drivers: $(DRIVERS)
 apps: $(APPS)
@@ -28,6 +28,12 @@ $(APPS): %: %.o $(APP_COMMON_OBJS)
 
 %.o: %.c
 	$(APP_CC) $(APP_CFLAGS) -c $< -o $@
+
+deploy: all
+	@echo "Deploying drivers and applications..."
+	@mkdir -p ../../rootfs/root
+	@cp $(DRIVERS) ../../rootfs/root/
+	@cp $(APPS) ../../rootfs/root/
 
 clean:
 	rm -f *.cmd *.ko *.mod.* *.mod *.o .*.cmd modules.order *.symvers $(APPS)

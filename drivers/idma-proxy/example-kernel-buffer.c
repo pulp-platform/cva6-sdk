@@ -39,9 +39,7 @@ struct channel channel;
 
 int main(int argc, char *argv[])
 {
-	printf("iDMA proxy user-space test\n");
-
-	/* Open the file descriptors for each tx channel and map the kernel driver memory into user space */
+	printf("iDMA proxy user-space test with IDMA_KERNEL_BUFFER\n");
 
     char file_path[64] = "/dev/";
     strcat(file_path, channel_name);
@@ -53,13 +51,12 @@ int main(int argc, char *argv[])
     channel.buf_ptr = (struct idma_proxy_kernel_buffer *)mmap(NULL, sizeof(struct idma_proxy_kernel_buffer) * 2,
                                     PROT_READ | PROT_WRITE, MAP_SHARED, channel.fd, 0);
     if (channel.buf_ptr == MAP_FAILED) {
-        printf("Failed to mmap tx channel\n");
+        printf("Failed to mmap kernel buffer\n");
         exit(EXIT_FAILURE);
     }
 
     channel.src_buffer = (void *)channel.buf_ptr->buffer;
     channel.dst_buffer = (void *)(channel.buf_ptr + 1)->buffer;
-    printf("Mapped tx channel buffers at %p and %p\n", channel.src_buffer, channel.dst_buffer);
 
     // Write a known pattern to the source buffer
     unsigned int *src_buffer = (unsigned int *)channel.src_buffer;
@@ -72,9 +69,7 @@ int main(int argc, char *argv[])
     for (unsigned int i = 0; i < test_size / sizeof(unsigned int); i++) {
         dst_buffer[i] = 0x0badc0de;
     }
-    printf("Source buffer initialized with test pattern, destination buffer initialized with 5s\n");
-
-    printf("Initialized source buffer with test pattern\n");
+    printf("Source buffer initialized with test pattern, destination buffer initialized with 0x0badc0de\n");
 
     idma_memcpy_transfer_t transfer;
     transfer.src = (uintptr_t)channel.src_buffer;
@@ -88,6 +83,7 @@ int main(int argc, char *argv[])
     ioctl(channel.fd, IOCTL_ISSUE_MEMCPY_TRANSFER, &transfer);
 
     printf("iDMA transfer successfully finished\n");
+
     // Verify the destination buffer
     dst_buffer = (unsigned int *)channel.dst_buffer;
     for (unsigned int i = 0; i < test_size / sizeof(unsigned int); i++) {

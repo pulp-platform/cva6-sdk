@@ -41,9 +41,7 @@ struct channel channel;
 int main(int argc, char *argv[])
 {
     int ret;
-	printf("iDMA proxy user-space test\n");
-
-	/* Open the file descriptors for each tx channel and map the kernel driver memory into user space */
+	printf("iDMA proxy user-space test with IDMA_COPY_BUFFER\n");
 
     char file_path[64] = "/dev/";
     strcat(file_path, channel_name);

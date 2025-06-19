@@ -44,9 +44,7 @@ void *create_pinned_buffer(size_t len);
 int main(int argc, char *argv[])
 {
     int ret;
-	printf("iDMA proxy user-space test\n");
-
-	/* Open the file descriptors for each tx channel and map the kernel driver memory into user space */
+	printf("iDMA proxy user-space test with IDMA_USER_DIRECT\n");
 
     char file_path[64] = "/dev/";
     strcat(file_path, channel_name);
