@@ -1,0 +1,1621 @@
+From 364471d0391480c667177ca67c08926aa1d6173f Mon Sep 17 00:00:00 2001
+From: Kevin Schaerer <schkevin@student.ethz.ch>
+Date: Thu, 19 Jun 2025 10:28:11 +0200
+Subject: [PATCH] add iDMA drivers (engine and proxy)
+
+Signed-off-by: Kevin Schaerer <schkevin@student.ethz.ch>
+---
+ drivers/dma/Kconfig       |  16 +
+ drivers/dma/Makefile      |   2 +
+ drivers/dma/idma-engine.c | 755 ++++++++++++++++++++++++++++++++++++++
+ drivers/dma/idma-proxy.c  | 734 ++++++++++++++++++++++++++++++++++++
+ drivers/dma/idma-proxy.h  |  53 +++
+ 5 files changed, 1560 insertions(+)
+ create mode 100644 drivers/dma/idma-engine.c
+ create mode 100644 drivers/dma/idma-proxy.c
+ create mode 100644 drivers/dma/idma-proxy.h
+
+diff --git a/drivers/dma/Kconfig b/drivers/dma/Kconfig
+index 90284ffda..37306721c 100644
+--- a/drivers/dma/Kconfig
++++ b/drivers/dma/Kconfig
+@@ -248,6 +248,22 @@ config HISI_DMA
+ 	help
+ 	  Support HiSilicon Kunpeng DMA engine.
+ 
++config IIS_IDMA_ENGINE
++	tristate "IIS iDMA Engine support"
++	depends on RISCV || COMPILE_TEST
++	depends on OF
++	select DMA_ENGINE
++	select DMA_VIRTUAL_CHANNELS
++	help
++	  Enable support for the IIS intelligent DMA controller (iDMA).
++
++config IIS_IDMA_PROXY
++	tristate "IIS iDMA proxy"
++	depends on RISCV
++	select IIS_IDMA_ENGINE
++	help
++	  Enable support for the IIS iDMA proxy.
++
+ config IMG_MDC_DMA
+ 	tristate "IMG MDC support"
+ 	depends on MIPS || COMPILE_TEST
+diff --git a/drivers/dma/Makefile b/drivers/dma/Makefile
+index 948a8da05..e31275ed7 100644
+--- a/drivers/dma/Makefile
++++ b/drivers/dma/Makefile
+@@ -37,6 +37,8 @@ obj-$(CONFIG_FSL_QDMA) += fsl-qdma.o
+ obj-$(CONFIG_FSL_RAID) += fsl_raid.o
+ obj-$(CONFIG_HISI_DMA) += hisi_dma.o
+ obj-$(CONFIG_HSU_DMA) += hsu/
++obj-$(CONFIG_IIS_IDMA_ENGINE) += idma-engine.o
++obj-$(CONFIG_IIS_IDMA_PROXY) += idma-proxy.o
+ obj-$(CONFIG_IMG_MDC_DMA) += img-mdc-dma.o
+ obj-$(CONFIG_IMX_DMA) += imx-dma.o
+ obj-$(CONFIG_IMX_SDMA) += imx-sdma.o
+diff --git a/drivers/dma/idma-engine.c b/drivers/dma/idma-engine.c
+new file mode 100644
+index 000000000..20df71b85
+--- /dev/null
++++ b/drivers/dma/idma-engine.c
+@@ -0,0 +1,755 @@
++// SPDX-License-Identifier: GPL-2.0
++//
++// Copyright (C) 2022 Axel Vanoni
++
++#include "asm/mmio.h"
++#include "linux/dmaengine.h"
++#include "linux/irqreturn.h"
++#include "linux/list.h"
++#include "linux/lockdep.h"
++#include "linux/spinlock.h"
++#include "linux/spinlock_types.h"
++#include "linux/virtio_blk.h"
++#include <linux/slab.h>
++#include <linux/module.h>
++#include <linux/types.h>
++#include <linux/dmapool.h>
++#include <linux/device.h>
++#include <linux/platform_device.h>
++#include <linux/of_device.h>
++#include <linux/of_dma.h>
++#include <linux/of.h>
++#include <linux/wait.h>
++
++#include "dmaengine.h"
++#include "virt-dma.h"
++
++#define IIS_IDMA_MAX_LENGTH_PER_TRANSFER 0xffffffffull
++#define IIS_IDMA_AXI_ID 0xff
++#define IIS_IDMA_AXI_FIXED 0x0
++#define IIS_IDMA_AXI_INCR 0x1
++#define IIS_IDMA_AXI_WRAP 0x2
++#define IIS_IDMA_SUPPORTED_ADDRESS_WIDTH (BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |  \
++                                          BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) | \
++                                          BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) | \
++                                          BIT(DMA_SLAVE_BUSWIDTH_8_BYTES))
++
++struct iis_idma_hw_desc
++{
++        u32 length;
++        u32 flags;
++        dma_addr_t next;
++        dma_addr_t src;
++        dma_addr_t dst;
++};
++
++struct iis_idma_channel
++{
++        struct virt_dma_chan vc;
++        struct iis_idma_device *parent;
++        struct dma_pool *pool;
++        struct iis_idma_channel *next;
++        bool is_terminated;
++        wait_queue_head_t wait_sync;
++};
++
++struct iis_idma_device
++{
++        struct dma_device dma_dev;
++        void __iomem *reg_base;
++        struct device *dev;
++        u32 n_channels;
++        u32 hw_cache_slots;
++        // Lock for `current_channel`. If taking in conjunction
++        // with a virtual channel lock, first take this one,
++        // then the one on the virtual channel to prevent
++        // deadlocks inside this module
++        spinlock_t current_channel_lock;
++        struct iis_idma_channel *current_channel;
++        struct iis_idma_channel channels[];
++};
++
++struct iis_idma_sw_desc
++{
++        struct virt_dma_desc vd;
++        struct iis_idma_sw_desc *next;
++        struct dma_pool *hw_desc_allocator;
++        dma_addr_t first;
++        int n_hw_descs;
++        struct iis_idma_hw_desc *hw_descs[];
++};
++
++static inline struct iis_idma_channel *to_idma_chan(struct dma_chan *chan)
++{
++        return container_of(to_virt_chan(chan), struct iis_idma_channel, vc);
++}
++
++static inline struct iis_idma_sw_desc *to_idma_desc(struct virt_dma_desc *desc)
++{
++        return container_of(desc, struct iis_idma_sw_desc, vd);
++}
++
++static inline bool is_desc_completed(struct virt_dma_desc *vd)
++{
++        struct iis_idma_sw_desc *desc = to_idma_desc(vd);
++        return desc->hw_descs[desc->n_hw_descs - 1]->flags == (u32)~0;
++}
++
++static inline bool is_last_desc(struct virt_dma_desc *vd)
++{
++        struct iis_idma_sw_desc *desc = to_idma_desc(vd);
++        return desc->hw_descs[desc->n_hw_descs - 1]->next == (dma_addr_t)~0ull;
++}
++
++// idma_device.current_channel_lock must be held when calling this function,
++// but no virtual channel locks
++// assumes that the channel is running
++static bool try_get_first_uncached(struct iis_idma_channel *chan, struct iis_idma_sw_desc **out_sw, size_t *out_hw_index)
++{
++        struct iis_idma_device *idma_dev = chan->parent;
++        struct iis_idma_channel *chan_cursor = idma_dev->current_channel;
++        struct iis_idma_sw_desc *sw_desc_cursor;
++        struct virt_dma_desc *vdesc;
++        // We need to take the one after all the cache slots
++        u32 index_of_first_uncached = idma_dev->hw_cache_slots + 1;
++        unsigned long flags;
++        size_t i;
++
++        rmb();
++        while (index_of_first_uncached)
++        {
++                spin_lock_irqsave(&chan_cursor->vc.lock, flags);
++                list_for_each_entry(vdesc, &chan_cursor->vc.desc_issued, node)
++                {
++                        if (is_desc_completed(vdesc))
++                                continue;
++                        sw_desc_cursor = to_idma_desc(vdesc);
++                        for (i = sw_desc_cursor->n_hw_descs - 1;
++                             i >= 0 && index_of_first_uncached > 0;
++                             --i)
++                        {
++                                if (sw_desc_cursor->hw_descs[i]->flags == (u32)~0)
++                                        break;
++                                --index_of_first_uncached;
++                        }
++                        if (index_of_first_uncached == 0)
++                                break;
++                }
++                spin_unlock_irqrestore(&chan_cursor->vc.lock, flags);
++                if (chan_cursor == chan)
++                        break;
++        }
++
++        if (index_of_first_uncached)
++                return false;
++
++        if (chan_cursor != chan)
++        {
++                // the entire channel is uncached
++                spin_lock_irqsave(&chan->vc.lock, flags);
++                sw_desc_cursor = to_idma_desc(vchan_next_desc(&chan->vc));
++                *out_sw = sw_desc_cursor;
++                *out_hw_index = 0;
++                spin_unlock_irqrestore(&chan->vc.lock, flags);
++        }
++        else
++        {
++                *out_sw = sw_desc_cursor;
++                *out_hw_index = i;
++        }
++
++        return true;
++}
++
++// idma_device.current_channel_lock must be held when calling this function
++static struct iis_idma_channel *get_channels_tail(struct iis_idma_device *dev)
++{
++        struct iis_idma_channel *cur;
++        cur = dev->current_channel;
++        while (cur && cur->next)
++        {
++                cur = cur->next;
++        }
++        return cur;
++}
++
++// idma_device.current_channel_lock must be held when calling this function
++static bool is_channel_running(struct iis_idma_channel *chan, struct iis_idma_device *dev)
++{
++        int i;
++        for (i = 0; i < dev->n_channels; ++i)
++        {
++                if (dev->channels[i].next == chan)
++                {
++                        return true;
++                }
++        }
++        return dev->current_channel == chan;
++}
++
++// assumes that the channel is not already running
++// caller needs to hold current_channel_lock and the lock on the channel vc
++static void iis_idma_maybe_launch_channel(struct iis_idma_channel *channel, struct iis_idma_device *idma_dev)
++{
++        struct virt_dma_desc *vd;
++        struct iis_idma_channel *tail;
++
++        vd = vchan_next_desc(&channel->vc);
++        if (!vd)
++                return;
++
++        tail = get_channels_tail(idma_dev);
++        if (tail)
++                tail->next = channel;
++        else
++                idma_dev->current_channel = channel;
++
++        // make sure that descriptors are flushed to memory
++        wmb();
++        writeq(to_idma_desc(vd)->first, idma_dev->reg_base);
++}
++
++static irqreturn_t iis_idma_interrupt(int irq, void *dev_id)
++{
++        struct iis_idma_device *idma_dev = dev_id;
++        struct iis_idma_channel *just_completed_chan;
++        struct virt_dma_desc *vd;
++        unsigned long iis_channel_flags;
++        unsigned long vchan_flags;
++        bool switch_to_next_channel;
++
++        spin_lock_irqsave(&idma_dev->current_channel_lock, iis_channel_flags);
++        just_completed_chan = idma_dev->current_channel;
++
++        WARN(just_completed_chan == NULL, "Current channel can't be null in irq context.");
++        // don't touch anything if the current channel is null
++        if (unlikely(just_completed_chan == NULL))
++                goto err_unlock_iis_channel;
++
++        // make sure all descriptor changes are propagated to caches
++        rmb();
++
++        spin_lock_irqsave(&just_completed_chan->vc.lock, vchan_flags);
++
++        vd = vchan_next_desc(&just_completed_chan->vc);
++        if (!vd)
++                // we have a terminated channel
++                goto err_unlock_vchan;
++
++        WARN(!is_desc_completed(vd), "Driver and hardware are out-of-sync.");
++        if (unlikely(!is_desc_completed(vd)))
++                goto err_unlock_vchan;
++
++        switch_to_next_channel = is_last_desc(vd);
++
++        list_del(&vd->node);
++        if (just_completed_chan->is_terminated)
++        {
++                vchan_vdesc_fini(vd);
++        }
++        else
++        {
++                vchan_cookie_complete(vd);
++        }
++
++        if (switch_to_next_channel)
++        {
++                // update to point to the next channel
++                if (just_completed_chan->next)
++                {
++                        idma_dev->current_channel = just_completed_chan->next;
++                }
++                else
++                {
++                        idma_dev->current_channel = NULL;
++                }
++                just_completed_chan->next = NULL;
++        }
++
++        if (switch_to_next_channel)
++        {
++                // try to relaunch, if we have new things
++                iis_idma_maybe_launch_channel(just_completed_chan, idma_dev);
++        }
++        spin_unlock_irqrestore(&just_completed_chan->vc.lock, vchan_flags);
++        spin_unlock_irqrestore(&idma_dev->current_channel_lock, iis_channel_flags);
++
++        wake_up(&just_completed_chan->wait_sync);
++
++        return IRQ_HANDLED;
++
++err_unlock_vchan:
++        spin_unlock_irqrestore(&just_completed_chan->vc.lock, vchan_flags);
++err_unlock_iis_channel:
++        spin_unlock_irqrestore(&idma_dev->current_channel_lock, iis_channel_flags);
++        return IRQ_HANDLED;
++}
++
++static void iis_idma_desc_free(struct virt_dma_desc *vd)
++{
++        // free sw descriptor
++        struct iis_idma_sw_desc *sw_desc = container_of(vd, struct iis_idma_sw_desc, vd);
++        int i;
++
++        for (i = sw_desc->n_hw_descs - 1; i >= 0; --i)
++        {
++                dma_pool_free(sw_desc->hw_desc_allocator, &sw_desc->hw_descs[i], i == 0 ? sw_desc->first : sw_desc->hw_descs[i - 1]->next);
++        }
++        sw_desc->n_hw_descs = 0;
++        kfree(sw_desc);
++}
++
++static struct iis_idma_sw_desc *iis_idma_desc_alloc_and_chain(struct iis_idma_channel *chan, int n_hw_descs)
++{
++        struct iis_idma_sw_desc *sw_desc;
++        int i;
++        dma_addr_t dma_addr;
++
++        sw_desc = kzalloc(struct_size(sw_desc, hw_descs, n_hw_descs), GFP_NOWAIT);
++        if (sw_desc == NULL)
++                return NULL;
++
++        sw_desc->hw_desc_allocator = chan->pool;
++        for (i = 0; i < n_hw_descs; ++i)
++        {
++                sw_desc->hw_descs[i] = dma_pool_alloc(sw_desc->hw_desc_allocator, GFP_NOWAIT, &dma_addr);
++                if (sw_desc->hw_descs[i] == NULL)
++                        goto err;
++                sw_desc->hw_descs[i]->next = ~0;
++                if (i == 0)
++                {
++                        sw_desc->first = dma_addr;
++                }
++                else
++                {
++                        sw_desc->hw_descs[i - 1]->next = dma_addr;
++                }
++                sw_desc->n_hw_descs++;
++        }
++
++        INIT_LIST_HEAD(&sw_desc->vd.node);
++
++        return sw_desc;
++err:
++        // we failed, so free descriptor again
++        iis_idma_desc_free(&sw_desc->vd);
++        return NULL;
++}
++
++static int iis_idma_alloc_chan_resources(struct dma_chan *chan)
++{
++        struct iis_idma_channel *idma_chan = to_idma_chan(chan);
++
++        // setup the descriptor memory pool
++        if (idma_chan->parent == NULL)
++                return 0;
++        idma_chan->is_terminated = false;
++        idma_chan->pool = dmam_pool_create("iis-dma-channel-pool", idma_chan->parent->dev,
++                                           sizeof(struct iis_idma_hw_desc), __alignof__(struct iis_idma_hw_desc), 0);
++        if (idma_chan->pool == NULL)
++                return -ENOMEM;
++
++        return 0;
++}
++
++static void iis_idma_free_chan_resources(struct dma_chan *chan)
++{
++        struct iis_idma_channel *idma_chan = to_idma_chan(chan);
++
++        vchan_free_chan_resources(&idma_chan->vc);
++        dmam_pool_destroy(idma_chan->pool);
++        idma_chan->pool = NULL;
++}
++
++static inline u32 iis_idma_flags(enum dma_transaction_type tx_type, bool do_interrupt)
++{
++        // from the hw source:
++        // Flags for this request. Currently, the following are defined:
++        // bit  0         set to trigger an irq on completion, unset to not be notified
++        // bits 2:1       burst type for source, fixed: 00, incr: 01, wrap: 10
++        // bits 4:3       burst type for destination, fixed: 00, incr: 01, wrap: 10
++        //                for a description of these modes, check AXI-Pulp documentation
++        // bit  5         set to decouple reads and writes in the backend
++        // bit  6         set to serialize requests. Not setting might violate AXI spec
++        // bit  7         set to deburst (each burst is split into own transfer)
++        //                for a more thorough description, refer to the iDMA backend documentation
++        // bits 11:8      Bitfield for AXI cache attributes for the source
++        // bits 15:12     Bitfield for AXI cache attributes for the destination
++        //                bits of the bitfield (refer to AXI-Pulp for a description):
++        //                bit 0: cache bufferable
++        //                bit 1: cache modifiable
++        //                bit 2: cache read alloc
++        //                bit 3: cache write alloc
++        // bits 23:16     AXI ID used for the transfer
++        // bits 31:24     unused/reserved
++
++        switch (tx_type)
++        {
++        case DMA_MEMCPY:
++                return IIS_IDMA_AXI_ID << 16 |
++                       0 << 12 |
++                       0 << 8 |
++                       0 << 7 |
++                       1 << 6 |
++                       0 << 5 |
++                       IIS_IDMA_AXI_INCR << 3 |
++                       IIS_IDMA_AXI_INCR << 1 |
++                       do_interrupt << 0;
++        default:
++                // ERROR
++                break;
++        }
++        return 0;
++}
++
++static dma_cookie_t
++iis_idma_tx_submit(struct dma_async_tx_descriptor *desc)
++{
++        struct iis_idma_sw_desc *sw_desc = to_idma_desc(container_of(desc, struct virt_dma_desc, tx));
++        struct iis_idma_sw_desc *prev_desc;
++        struct iis_idma_channel *chan = to_idma_chan(desc->chan);
++        struct virt_dma_desc *vd;
++        unsigned long flags;
++
++        // chain the last hw descriptor of the last submitted transfer
++        // to the first hw descriptor of this new one
++        spin_lock_irqsave(&chan->vc.lock, flags);
++        if (!list_empty(&chan->vc.desc_submitted))
++        {
++                vd = list_last_entry(&chan->vc.desc_submitted, struct virt_dma_desc, node);
++                prev_desc = to_idma_desc(vd);
++                prev_desc->hw_descs[prev_desc->n_hw_descs - 1]->next = sw_desc->first;
++        }
++        spin_unlock_irqrestore(&chan->vc.lock, flags);
++        return vchan_tx_submit(desc);
++}
++
++static inline struct dma_async_tx_descriptor *
++iis_idma_tx_prep(struct iis_idma_channel *idma_channel, struct iis_idma_sw_desc *sw_desc, unsigned long flags)
++{
++        struct dma_async_tx_descriptor *as_desc;
++        as_desc = vchan_tx_prep(&idma_channel->vc, &sw_desc->vd, flags);
++        // we hook into as_desc->tx_submit to chain as we are submitting
++        as_desc->tx_submit = iis_idma_tx_submit;
++        return as_desc;
++}
++
++static struct dma_async_tx_descriptor *
++iis_idma_prep_memcpy(struct dma_chan *chan, dma_addr_t dst,
++                     dma_addr_t src, size_t len, unsigned long flags)
++{
++        // setup sw + hw descriptors, chain them, etc.
++        // put a function pointer to the submit function inside the descriptor
++
++        struct iis_idma_sw_desc *sw_desc;
++        struct iis_idma_channel *idma_chan;
++        size_t n_hw_descs;
++        size_t next_length;
++        int i = 0;
++
++        if (!chan || !len)
++                return NULL;
++
++        n_hw_descs = DIV_ROUND_UP(len, IIS_IDMA_MAX_LENGTH_PER_TRANSFER);
++        idma_chan = to_idma_chan(chan);
++
++        sw_desc = iis_idma_desc_alloc_and_chain(idma_chan, n_hw_descs);
++        if (sw_desc == NULL)
++                return NULL;
++
++        for (i = 0; i < n_hw_descs; ++i)
++        {
++                next_length = min_t(size_t, len, IIS_IDMA_MAX_LENGTH_PER_TRANSFER);
++                len -= next_length;
++                sw_desc->hw_descs[i]->length = next_length;
++                sw_desc->hw_descs[i]->flags = iis_idma_flags(DMA_MEMCPY, i == n_hw_descs - 1);
++                sw_desc->hw_descs[i]->src = src;
++                sw_desc->hw_descs[i]->dst = dst;
++        }
++
++        return vchan_tx_prep(&idma_chan->vc, &sw_desc->vd, flags);
++}
++
++static int iis_idma_terminate_all(struct dma_chan *chan)
++{
++        struct iis_idma_channel *idma_chan = to_idma_chan(chan);
++        struct iis_idma_device *idma_dev = idma_chan->parent;
++        struct iis_idma_sw_desc *uncached_sw;
++
++        size_t uncached_hw_index;
++        unsigned long iis_channel_flags;
++        unsigned long vchan_flags;
++        LIST_HEAD(head);
++
++        idma_chan->is_terminated = true;
++
++        // dequeue everything we can, but leave needed descriptors in the
++        // queues for the irq handler.
++        spin_lock_irqsave(&idma_dev->current_channel_lock, iis_channel_flags);
++        if (is_channel_running(idma_chan, idma_dev) &&
++            try_get_first_uncached(idma_chan, &uncached_sw, &uncached_hw_index))
++        {
++                // make sure that the transfer stops here
++                uncached_sw->hw_descs[uncached_hw_index]->next = ~0;
++
++                spin_lock_irqsave(&idma_chan->vc.lock, vchan_flags);
++                // move all sw descriptors after the uncached into our local list
++                if (!list_is_last(&uncached_sw->vd.node, &idma_chan->vc.desc_issued))
++                {
++                        list_cut_before(&head, &uncached_sw->vd.node, uncached_sw->vd.node.next);
++                }
++        }
++        else
++        {
++                // Either channel is not running, so we have no issued,
++                // or all descriptors might be cached in hw, so don't touch them
++                spin_lock_irqsave(&idma_chan->vc.lock, vchan_flags);
++        }
++
++        // get the rest
++        list_splice_tail_init(&idma_chan->vc.desc_allocated, &head);
++        list_splice_tail_init(&idma_chan->vc.desc_submitted, &head);
++        list_splice_tail_init(&idma_chan->vc.desc_completed, &head);
++        list_splice_tail_init(&idma_chan->vc.desc_terminated, &head);
++
++        spin_unlock_irqrestore(&idma_chan->vc.lock, vchan_flags);
++        spin_unlock_irqrestore(&idma_dev->current_channel_lock, iis_channel_flags);
++
++        vchan_dma_desc_free_list(&idma_chan->vc, &head);
++        return 0;
++}
++
++static bool channel_wq_condition(struct iis_idma_channel *idma_chan)
++{
++        unsigned long flags;
++        bool ret;
++        spin_lock_irqsave(&idma_chan->parent->current_channel_lock, flags);
++        ret = !is_channel_running(idma_chan, idma_chan->parent);
++        spin_unlock_irqrestore(&idma_chan->parent->current_channel_lock, flags);
++        return ret;
++}
++
++static void iis_idma_synchronize(struct dma_chan *chan)
++{
++        // if channel was not terminated, vchan_synchronize
++        // something something vchan_synchronize
++        // else, wait for the next channel to start,
++        // with a wait queue or something
++        struct iis_idma_channel *idma_chan = to_idma_chan(chan);
++
++        wait_event(idma_chan->wait_sync, channel_wq_condition(idma_chan));
++        vchan_synchronize(&idma_chan->vc);
++}
++
++static u32 iis_idma_get_residue(struct iis_idma_channel *chan, dma_cookie_t cookie)
++{
++        struct virt_dma_desc *vd = NULL;
++        struct iis_idma_sw_desc *sw_desc;
++        u32 residue = 0;
++        int i;
++        unsigned long flags;
++        spin_lock_irqsave(&chan->vc.lock, flags);
++        vd = vchan_find_desc(&chan->vc, cookie);
++        if (!vd)
++                goto out;
++        sw_desc = to_idma_desc(vd);
++
++        // DMA writes into memory, so flush caches before accessing hw descriptors
++        rmb();
++
++        // traverse back to front, in order to be able to break once
++        // the first complete transfer is found
++        for (i = sw_desc->n_hw_descs - 1; i >= 0; --i)
++        {
++                if (sw_desc->hw_descs[i]->flags == (u32)~0)
++                {
++                        // this hw descriptor is complete, break
++                        break;
++                }
++                residue += sw_desc->hw_descs[i]->length;
++        }
++out:
++        spin_unlock_irqrestore(&chan->vc.lock, flags);
++        return residue;
++}
++
++static enum dma_status iis_idma_tx_status(struct dma_chan *chan, dma_cookie_t cookie, struct dma_tx_state *tx_state)
++{
++        struct iis_idma_channel *idma_chan = to_idma_chan(chan);
++        enum dma_status ret;
++
++        ret = dma_cookie_status(chan, cookie, tx_state);
++        if (tx_state && (ret != DMA_ERROR))
++        {
++                dma_set_residue(tx_state, iis_idma_get_residue(idma_chan, cookie));
++        }
++        return ret;
++}
++
++static void iis_idma_issue_pending(struct dma_chan *chan)
++{
++        // vchan_issue_pending, write start address to register
++        // and update all information that is needed
++        struct iis_idma_channel *idma_chan = to_idma_chan(chan);
++        struct iis_idma_device *idma_dev = idma_chan->parent;
++        unsigned long iis_channel_flags;
++        unsigned long vchan_flags;
++        spin_lock_irqsave(&idma_dev->current_channel_lock, iis_channel_flags);
++        spin_lock_irqsave(&idma_chan->vc.lock, vchan_flags);
++
++        if (!vchan_issue_pending(&idma_chan->vc))
++                goto out;
++
++        if (is_channel_running(idma_chan, idma_dev))
++        {
++                // TODO: try hotchaining
++                // if hotchaining fails, the interrupt handler
++                // will reschedule the channel as needed
++                goto out;
++        }
++
++        iis_idma_maybe_launch_channel(idma_chan, idma_dev);
++out:
++        spin_unlock_irqrestore(&idma_chan->vc.lock, vchan_flags);
++        spin_unlock_irqrestore(&idma_dev->current_channel_lock, iis_channel_flags);
++}
++
++static int iis_idma_chan_init(struct platform_device *pdev,
++                              struct iis_idma_device *idma_dev,
++                              struct iis_idma_channel *idma_chan)
++{
++        vchan_init(&idma_chan->vc, &idma_dev->dma_dev);
++        idma_chan->vc.desc_free = iis_idma_desc_free;
++        init_waitqueue_head(&idma_chan->wait_sync);
++
++        idma_chan->is_terminated = false;
++        idma_chan->next = NULL;
++        idma_chan->parent = idma_dev;
++        return 0;
++}
++
++static int iis_idma_probe(struct platform_device *pdev)
++{
++        struct device *dev = &pdev->dev;
++        struct device_node *of_node = dev->of_node;
++        struct iis_idma_device *idma_dev;
++        u32 number_of_channels, hw_cache_slots;
++        int ret, i;
++        int irq;
++
++        // count the number of channels to allocate:
++        // get eth,input-slots with e.g. of_property_read_u32_index
++        // TODO: perhaps there is a standard property name we can use
++        ret = of_property_read_u32(of_node, "eth,input-slots", &number_of_channels);
++        if (ret < 0)
++                return ret;
++
++        ret = of_property_read_u32(of_node, "eth,pending-slots", &hw_cache_slots);
++        if (ret < 0)
++                return ret;
++
++        // allocate a struct iis_dma_device (with enough space for all channels)
++        idma_dev = devm_kzalloc(dev, struct_size(idma_dev, channels, number_of_channels), GFP_KERNEL);
++        if (!idma_dev)
++                return -ENOMEM;
++
++        idma_dev->dev = &pdev->dev;
++        idma_dev->hw_cache_slots = hw_cache_slots;
++
++        // get memory base from device tree file and map it
++        idma_dev->reg_base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
++        if (IS_ERR(idma_dev->reg_base))
++                return PTR_ERR(idma_dev->reg_base);
++
++        // register interrupt
++        irq = platform_get_irq(pdev, 0);
++        if (irq < 0)
++                return irq;
++
++        ret = devm_request_irq(dev, irq, iis_idma_interrupt, IRQF_SHARED, "iis-idma", idma_dev);
++        if (ret)
++                return ret;
++
++        // get eth,pending-slots with e.g. of_property_read_u32_index
++        // setup capability struct
++        dma_cap_set(DMA_MEMCPY, idma_dev->dma_dev.cap_mask);
++        dma_cap_set(DMA_SLAVE, idma_dev->dma_dev.cap_mask);
++        INIT_LIST_HEAD(&idma_dev->dma_dev.channels);
++        idma_dev->dma_dev.device_alloc_chan_resources = iis_idma_alloc_chan_resources;
++        idma_dev->dma_dev.device_free_chan_resources = iis_idma_free_chan_resources;
++        idma_dev->dma_dev.device_tx_status = iis_idma_tx_status;
++        idma_dev->dma_dev.device_issue_pending = iis_idma_issue_pending;
++        idma_dev->dma_dev.device_synchronize = iis_idma_synchronize;
++        idma_dev->dma_dev.device_terminate_all = iis_idma_terminate_all;
++        idma_dev->dma_dev.device_prep_dma_memcpy = iis_idma_prep_memcpy;
++        idma_dev->dma_dev.dev = dev;
++        idma_dev->dma_dev.residue_granularity = DMA_RESIDUE_GRANULARITY_SEGMENT;
++        idma_dev->dma_dev.src_addr_widths = IIS_IDMA_SUPPORTED_ADDRESS_WIDTH;
++        idma_dev->dma_dev.dst_addr_widths = IIS_IDMA_SUPPORTED_ADDRESS_WIDTH;
++
++        // initialize any fields in the idma_dev, such as waiting lists
++
++        // setup channels
++        for (i = 0; i < number_of_channels; ++i)
++        {
++                ret = iis_idma_chan_init(pdev, idma_dev, &idma_dev->channels[i]);
++                if (ret)
++                        return ret;
++        }
++        idma_dev->n_channels = number_of_channels;
++        // register driver
++        ret = dma_async_device_register(&idma_dev->dma_dev);
++        if (ret)
++                return ret;
++
++        // TODO: is this translate function the right one to use?
++        ret = of_dma_controller_register(of_node, of_dma_xlate_by_chan_id, idma_dev);
++        if (ret)
++                goto unregister_async;
++
++        // register driver data, to be able to access it from the remove function
++        platform_set_drvdata(pdev, idma_dev);
++
++        return 0;
++
++unregister_async:
++        dma_async_device_unregister(&idma_dev->dma_dev);
++        return ret;
++}
++
++static int iis_idma_remove(struct platform_device *pdev)
++{
++        struct iis_idma_device *idma_dev = platform_get_drvdata(pdev);
++        struct dma_chan *chan;
++        int ret;
++
++        of_dma_controller_free(pdev->dev.of_node);
++        dma_async_device_unregister(&idma_dev->dma_dev);
++
++        list_for_each_entry(chan, &idma_dev->dma_dev.channels, device_node)
++        {
++                ret = dmaengine_terminate_sync(chan);
++                if (ret)
++                        return ret;
++        }
++
++        return 0;
++}
++
++static const struct of_device_id iis_idma_match[] = {
++    {.compatible = "eth,idma-engine"},
++    {/* sentinel */}};
++MODULE_DEVICE_TABLE(of, iis_idma_match);
++
++static struct platform_driver iis_idma_driver = {
++    .probe = iis_idma_probe,
++    .remove = iis_idma_remove,
++    .driver = {
++        .name = "iis-idma-engine",
++        .of_match_table = iis_idma_match,
++    },
++};
++module_platform_driver(iis_idma_driver);
++
++MODULE_DESCRIPTION("IIS iDMA DMA engine driver");
++MODULE_LICENSE("GPL v2");
+\ No newline at end of file
+diff --git a/drivers/dma/idma-proxy.c b/drivers/dma/idma-proxy.c
+new file mode 100644
+index 000000000..c8ab3f274
+--- /dev/null
++++ b/drivers/dma/idma-proxy.c
+@@ -0,0 +1,734 @@
++// SPDX-License-Identifier: GPL-2.0
++//
++// Copyright (C) 2025 Kevin Schaerer
++
++#include <linux/slab.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/cdev.h>
++#include <linux/of_dma.h>
++#include <linux/fs.h>
++#include <linux/ioctl.h>
++#include <linux/dma-mapping.h>
++
++#include "idma-proxy.h"
++
++#define MAX_IDMA_PROXY_DEVICES 8
++
++/**
++ * struct idma_port - structure representing a port for iDMA transfers
++ *
++ * This structure is used to represent a port for iDMA transfers. (Either source or destination)
++ *
++ * @addr:        The user virtual address of the port
++ * @phys_addr:   The physical address of the port
++ * @type:        The type of the port (IDMA_KERNEL_BUFFER, IDMA_COPY_BUFFER, IDMA_USER_DIRECT)
++ * @length:      The length of the buffer referenced by the port in bytes
++ * @num_pages:   The number of pages, only used for IDMA_USER_DIRECT
++ * @pages:       The pages for user direct access, only used for IDMA_USER_DIRECT
++ */
++struct idma_port
++{
++        uintptr_t addr;
++        dma_addr_t phys_addr;
++        idma_port_type_t type;
++        size_t length;
++        int num_pages;
++        struct page **pages;
++};
++
++/**
++ * struct idma_proxy_channel - structure representing a channel for iDMA transfers
++ *
++ * This structure is used to represent a channel for iDMA transfers.
++ *
++ * @dev:          The device associated with the channel
++ * @chan:         The DMA channel used for the transfer
++ * @cdev:         The character device associated with the channel
++ * @chr_dev:      The character device for user space access
++ * @buffers:      The kernel buffers used for the transfer, one for source and one for destination
++ *                Those are used if the respective port type is IDMA_KERNEL_BUFFER
++ * @buffer_phys_addrs: The physical addresses of the buffers
++ * @cmp:          The completion structure used to signal transfer completion
++ * @cookie:       The DMA cookie for the transfer
++ * @src_port:     The source port for the transfer
++ * @dst_port:     The destination port for the transfer
++ */
++struct idma_proxy_channel
++{
++        struct device *dev;
++        struct dma_chan *chan;
++        struct cdev cdev;
++        struct device *chr_dev;
++        struct idma_proxy_kernel_buffer *buffers[2];
++        dma_addr_t buffer_phys_addrs[2];
++        struct completion cmp;
++        dma_cookie_t cookie;
++        struct idma_port src_port;
++        struct idma_port dst_port;
++};
++
++/**
++ * struct idma_proxy_device - structure representing the iDMA proxy device
++ *
++ * This structure is used to represent the iDMA proxy device, which manages multiple channels.
++ *
++ * @dev:          The device associated with the iDMA proxy
++ * @n_channels:   The number of channels available in the iDMA proxy
++ * @channels:     The array of channels managed by the iDMA proxy
++ * @names:        The names of the channels, used for device creation
++ * @device_num_base: The base device number for character devices
++ * @device_class: The class for the character devices
++ */
++struct idma_proxy_device
++{
++        struct device *dev;
++        int n_channels;
++        struct idma_proxy_channel *channels;
++        char **names;
++        dev_t device_num_base;
++        struct class *device_class;
++};
++
++/**
++ * @brief: Callback function for DMA transfer completion
++ * This function is called when a DMA transfer completes.
++ *
++ * @param completion: Pointer to the completion structure to signal
++ */
++static void idma_proxy_callback(void *completion)
++{
++        complete(completion);
++}
++
++/**
++ * @brief: Prepares the idma_port for the specified type
++ *
++ * This function prepares the idma_port for the specified type by allocating memory,
++ * copying data from user space, or getting user pages as needed.
++ * This function can be used to prepare both source and destination ports for the transfer.
++ *
++ * @param port: Pointer to the idma_port to prepare
++ * @return: 0 on success, negative error code on failure
++ */
++static inline int prepare_idma_port_for_type(struct idma_port *port)
++{
++        int ret;
++
++        switch (port->type)
++        {
++        case IDMA_KERNEL_BUFFER:
++        {
++                // No action needed for kernel buffer
++                break;
++        }
++        case IDMA_COPY_BUFFER:
++        {
++                void *result_virt = 0;
++                result_virt = (void *)__get_free_pages(GFP_KERNEL | GFP_DMA32, order_base_2(ALIGN(port->length, PAGE_SIZE) / PAGE_SIZE));
++                if (!result_virt)
++                {
++                        pr_err("Failed to allocate memory for copy buffer\n");
++                        return -ENOMEM;
++                }
++                ret = copy_from_user(result_virt, (const void __user *)port->addr, port->length);
++                if (ret)
++                {
++                        pr_err("Failed to copy data from user space to kernel buffer\n");
++                        free_pages((unsigned long)result_virt, order_base_2(ALIGN(port->length, PAGE_SIZE) / PAGE_SIZE));
++                        return ret;
++                }
++                port->phys_addr = virt_to_phys(result_virt);
++                break;
++        }
++        case IDMA_USER_DIRECT:
++        {
++                port->num_pages = DIV_ROUND_UP(port->length, PAGE_SIZE);
++                port->pages = kcalloc(port->num_pages, sizeof(struct page *), GFP_KERNEL);
++                if (!port->pages)
++                {
++                        pr_err("Failed to allocate memory for user pages\n");
++                        return -ENOMEM;
++                }
++                ret = get_user_pages_fast(port->addr, port->num_pages, 0, port->pages);
++                if (ret < 0)
++                {
++                        pr_err("Failed to get user pages for address %lx\n", port->addr);
++                        return ret;
++                }
++                port->phys_addr = page_to_phys(port->pages[0]);
++                break;
++        }
++        default:
++                pr_err("Unsupported port type %d\n", port->type);
++                return -EINVAL;
++        }
++
++        return 0;
++}
++
++/**
++ * @brief: Destructs the idma_port for the specified type
++ *
++ * This function destructs the idma_port for the specified type by freeing memory,
++ * copying data to user space, or releasing user pages as needed.
++ * This function can be used to destruct both source and destination ports after the transfer.
++ *
++ * @param port: Pointer to the idma_port to destruct
++ * @return: 0 on success, negative error code on failure
++ */
++static inline int destruct_idma_port_for_type(struct idma_port *port)
++{
++        int i, ret;
++
++        switch (port->type)
++        {
++        case IDMA_KERNEL_BUFFER:
++        {
++                // No action needed for kernel buffer
++                break;
++        }
++        case IDMA_COPY_BUFFER:
++        {
++                void *virt_addr = phys_to_virt(port->phys_addr);
++                if (!virt_addr)
++                {
++                        pr_err("Failed to convert physical address %llx to virtual address\n", port->phys_addr);
++                        return -EFAULT;
++                }
++                ret = copy_to_user((void __user *)port->addr, virt_addr, port->length);
++                if (ret)
++                {
++                        pr_err("Failed to copy data from kernel buffer to user space\n");
++                }
++                free_pages((unsigned long)virt_addr, order_base_2(ALIGN(port->length, PAGE_SIZE) / PAGE_SIZE));
++                break;
++        }
++        case IDMA_USER_DIRECT:
++        {
++                if (!port->pages)
++                {
++                        pr_err("No pages allocated for user direct access\n");
++                        return -EFAULT;
++                }
++                for (i = 0; i < port->num_pages; i++)
++                {
++                        if (port->pages[i])
++                                put_page(port->pages[i]);
++                }
++                kfree(port->pages);
++                port->pages = NULL;
++                port->num_pages = 0;
++                port->phys_addr = 0;
++                port->addr = 0;
++
++                break;
++        }
++        default:
++                pr_err("Unsupported port type %d\n", port->type);
++                return -EINVAL;
++        }
++
++        return 0;
++}
++
++/**
++ * @brief: Starts the iDMA transfer using the specified channel and transfer parameters
++ *
++ * This function prepares the source and destination ports, sets up the DMA transfer,
++ * and submits it to the DMA engine.
++ *
++ * @param proxy_chan: Pointer to the idma_proxy_channel to use for the transfer
++ * @param transfer: Pointer to the idma_memcpy_transfer structure containing transfer parameters
++ * @return: 0 on success, negative error code on failure
++ */
++static int start_idma_transfer(struct idma_proxy_channel *proxy_chan, struct idma_memcpy_transfer *transfer)
++{
++        enum dma_ctrl_flags flags = DMA_CTRL_ACK | DMA_PREP_INTERRUPT;
++        struct dma_async_tx_descriptor *chan_desc;
++        struct dma_device *dma_device = proxy_chan->chan->device;
++        int ret;
++
++        proxy_chan->src_port.addr = transfer->src;
++        proxy_chan->dst_port.addr = transfer->dst;
++        proxy_chan->src_port.type = transfer->src_type;
++        proxy_chan->dst_port.type = transfer->dst_type;
++        proxy_chan->src_port.length = transfer->length;
++        proxy_chan->dst_port.length = transfer->length;
++        proxy_chan->src_port.num_pages = 0;
++        proxy_chan->dst_port.num_pages = 0;
++        proxy_chan->src_port.pages = NULL;
++        proxy_chan->dst_port.pages = NULL;
++
++        // Fail-safe: By default use the buffers allocated in the channel
++        proxy_chan->src_port.phys_addr = proxy_chan->buffer_phys_addrs[0];
++        proxy_chan->dst_port.phys_addr = proxy_chan->buffer_phys_addrs[1];
++
++        ret = prepare_idma_port_for_type(&proxy_chan->src_port);
++        if (ret)
++        {
++                pr_err("Failed to prepare source port for type %d\n", transfer->src_type);
++                return ret;
++        }
++        ret = prepare_idma_port_for_type(&proxy_chan->dst_port);
++        if (ret)
++        {
++                pr_err("Failed to prepare destination port for type %d\n", transfer->dst_type);
++                return ret;
++        }
++        pr_debug("Prepared source address %lx (phys: %llx) and destination address %lx (phys: %llx)\n",
++                transfer->src, proxy_chan->src_port.phys_addr, transfer->dst, proxy_chan->dst_port.phys_addr);
++
++        chan_desc = dma_device->device_prep_dma_memcpy(proxy_chan->chan,
++                                                       proxy_chan->dst_port.phys_addr,
++                                                       proxy_chan->src_port.phys_addr,
++                                                       transfer->length, flags);
++        if (!chan_desc)
++        {
++                pr_err("Failed to prepare DMA memcpy transfer\n");
++                return -ENOMEM;
++        }
++        pr_debug("Prepared DMA memcpy transfer with length %zu\n", transfer->length);
++        wmb();
++
++        chan_desc->callback = idma_proxy_callback;
++        chan_desc->callback_param = &proxy_chan->cmp;
++
++        init_completion(&proxy_chan->cmp);
++
++        proxy_chan->cookie = chan_desc->tx_submit(chan_desc);
++        if (dma_submit_error(proxy_chan->cookie))
++        {
++                pr_err("Failed to submit DMA memcpy transfer\n");
++                return proxy_chan->cookie;
++        }
++        pr_debug("Submitted DMA memcpy transfer with cookie %d\n", proxy_chan->cookie);
++        dma_async_issue_pending(proxy_chan->chan);
++        return 0;
++}
++
++/**
++ * @brief: Waits for the iDMA transfer to complete and cleans up resources
++ *
++ * This function waits for the DMA transfer to complete, checks the status,
++ * and destructs the source and destination ports.
++ *
++ * @param proxy_chan: Pointer to the idma_proxy_channel used for the transfer
++ * @param transfer: Pointer to the idma_memcpy_transfer structure containing transfer parameters
++ * @return: 0 on success, negative error code on failure
++ */
++static int wait_for_idma_transfer(struct idma_proxy_channel *proxy_chan, struct idma_memcpy_transfer *transfer)
++{
++        enum dma_status status;
++        int ret;
++
++        if (!wait_for_completion_timeout(&proxy_chan->cmp, msecs_to_jiffies(5000)))
++        {
++                pr_err("Timeout waiting for DMA transfer to complete\n");
++                return -ETIMEDOUT;
++        }
++
++        status = dma_async_is_tx_complete(proxy_chan->chan, proxy_chan->cookie, NULL, NULL);
++
++        if (status != DMA_COMPLETE)
++        {
++                pr_err("DMA transfer failed with status %d\n", status);
++                return -EIO;
++        }
++        pr_debug("DMA transfer completed successfully with cookie %d\n", proxy_chan->cookie);
++
++        // Free the buffers if they were allocated
++        ret = destruct_idma_port_for_type(&proxy_chan->src_port);
++        if (ret)
++        {
++                pr_err("Failed to destruct source port for type %d\n", transfer->src_type);
++                return ret;
++        }
++        ret = destruct_idma_port_for_type(&proxy_chan->dst_port);
++        if (ret)
++        {
++                pr_err("Failed to destruct destination port for type %d\n", transfer->dst_type);
++                return ret;
++        }
++        pr_debug("Destructed source and destination ports successfully\n");
++        // Reset the completion for the next transfer
++        init_completion(&proxy_chan->cmp);
++        proxy_chan->cookie = 0;
++        return 0;
++}
++
++/**
++ * @brief: Opens the iDMA proxy device
++ *
++ * This function is called when the iDMA proxy device is opened.
++ * It sets the private data for the file to the idma_proxy_channel.
++ *
++ * @param inode: Pointer to the inode of the device
++ * @param filp: Pointer to the file structure for the device
++ * @return: 0 on success, negative error code on failure
++ */
++static int idma_proxy_open(struct inode *inode, struct file *filp)
++{
++        struct idma_proxy_channel *proxy_chan = container_of(inode->i_cdev, struct idma_proxy_channel, cdev);
++        filp->private_data = proxy_chan;
++        pr_debug("Opened iDMA proxy device\n");
++        return 0;
++}
++
++/**
++ * @brief: Releases the iDMA proxy device
++ *
++ * This function is called when the iDMA proxy device is released.
++ * It resets the private data for the file to NULL.
++ *
++ * @param inode: Pointer to the inode of the device
++ * @param filp: Pointer to the file structure for the device
++ * @return: 0 on success, negative error code on failure
++ */
++static int idma_proxy_release(struct inode *inode, struct file *filp)
++{
++        // struct idma_proxy_channel *proxy_chan = filp->private_data;
++        pr_debug("Released iDMA proxy device\n");
++        filp->private_data = NULL;
++
++        // TODO: Free resources if necessary
++        return 0;
++}
++
++/**
++ * @brief: Memory mapping function for the iDMA proxy device
++ *
++ * This function maps the kernel buffers for source and destination to user space.
++ * It checks if the requested size matches the expected size and returns an error if not.
++ *
++ * @param filp: Pointer to the file structure for the device
++ * @param vma: Pointer to the vm_area_struct representing the memory area to map
++ * @return: 0 on success, negative error code on failure
++ */
++static int idma_proxy_mmap(struct file *filp, struct vm_area_struct *vma)
++{
++        struct idma_proxy_channel *proxy_chan = filp->private_data;
++        unsigned long size = vma->vm_end - vma->vm_start;
++
++        if (size != KERNEL_BUFFER_SIZE << 1)
++        {
++                pr_err("Requested size %lu does not match kernel buffer sizes (src & dst) %d\n", size, KERNEL_BUFFER_SIZE << 1);
++                return -EINVAL;
++        }
++
++        return dma_mmap_coherent(proxy_chan->dev, vma,
++                                 proxy_chan->buffers[0], proxy_chan->buffer_phys_addrs[0],
++                                 KERNEL_BUFFER_SIZE << 1);
++}
++
++/**
++ * @brief: IOCTL handler for the iDMA proxy device
++ *
++ * This function handles IOCTL commands for the iDMA proxy device.
++ *
++ * @param filp: Pointer to the file structure for the device
++ * @param cmd: The IOCTL command
++ * @param arg: The argument for the IOCTL command
++ * @return: 0 on success, negative error code on failure
++ */
++static long idma_proxy_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++        struct idma_proxy_channel *proxy_chan = filp->private_data;
++        int ret;
++
++        switch (cmd)
++        {
++        case IOCTL_ISSUE_MEMCPY_TRANSFER:
++        {
++                idma_memcpy_transfer_t transfer;
++                if (copy_from_user(&transfer, (const void __user *)arg, sizeof(transfer)))
++                {
++                        pr_err("Error when copying transfer request from user space\n");
++                        return -EFAULT;
++                }
++
++                if (transfer.length <= 0)
++                {
++                        pr_err("Transfer length must be greater than 0\n");
++                        return -EINVAL;
++                }
++
++                ret = start_idma_transfer(proxy_chan, &transfer);
++                if (ret)
++                {
++                        pr_err("Failed to start iDMA transfer: %d\n", ret);
++                        return ret;
++                }
++                ret = wait_for_idma_transfer(proxy_chan, &transfer);
++                if (ret)
++                {
++                        pr_err("Failed to wait for iDMA transfer: %d\n", ret);
++                        return ret;
++                }
++                pr_debug("iDMA transfer completed successfully\n");
++                break;
++        }
++        default:
++        {
++                pr_warn("Unhandled IOCTL command\n");
++                break;
++        }
++        }
++        return 0;
++}
++
++static struct file_operations idma_proxy_fops = {
++    .owner = THIS_MODULE,
++    .open = idma_proxy_open,
++    .release = idma_proxy_release,
++    .unlocked_ioctl = idma_proxy_ioctl,
++    .mmap = idma_proxy_mmap,
++};
++
++/**
++ * @brief: Initializes a channel for the iDMA proxy device
++ *
++ * This function initializes a channel for the iDMA proxy device by requesting a DMA channel,
++ * allocating kernel buffers, and creating a character device for user space access.
++ *
++ * @param idma_proxy_dev: Pointer to the idma_proxy_device structure representing the iDMA proxy device
++ * @param i: The index of the channel to initialize
++ *
++ * @return: 0 on success, negative error code on failure
++ */
++static int idma_proxy_init_channel(struct idma_proxy_device *idma_proxy_dev, int i)
++{
++        struct idma_proxy_channel *proxy_chan = &idma_proxy_dev->channels[i];
++        char *name = idma_proxy_dev->names[i];
++        void *buffer_ptr;
++        int ret;
++
++        proxy_chan->dev = idma_proxy_dev->dev;
++        proxy_chan->chan = dma_request_chan(proxy_chan->dev, name);
++        if (IS_ERR(proxy_chan->chan))
++        {
++                pr_err("Failed to request DMA channel %d: %ld\n", i, PTR_ERR(proxy_chan->chan));
++                return PTR_ERR(proxy_chan->chan);
++        }
++
++        cdev_init(&proxy_chan->cdev, &idma_proxy_fops);
++        proxy_chan->cdev.owner = THIS_MODULE;
++        ret = cdev_add(&proxy_chan->cdev, idma_proxy_dev->device_num_base + i, 1);
++        if (ret)
++        {
++                pr_err("Failed to add cdev for channel %d\n", i);
++                return ret;
++        }
++
++        proxy_chan->chr_dev = device_create(idma_proxy_dev->device_class, NULL, idma_proxy_dev->device_num_base + i, NULL, name);
++        if (IS_ERR(proxy_chan->chr_dev))
++        {
++                pr_err("Failed to create device for idma\n");
++                cdev_del(&proxy_chan->cdev);
++                return PTR_ERR(proxy_chan->chr_dev);
++        }
++
++        buffer_ptr = (struct idma_proxy_kernel_buffer *)
++            dmam_alloc_coherent(proxy_chan->dev,
++                                sizeof(struct idma_proxy_kernel_buffer) * 2,
++                                &proxy_chan->buffer_phys_addrs[0], GFP_KERNEL);
++
++        if (!buffer_ptr)
++        {
++                pr_err("Failed to allocate memory for channel %d buffers\n", i);
++                device_destroy(idma_proxy_dev->device_class, idma_proxy_dev->device_num_base + i);
++                cdev_del(&proxy_chan->cdev);
++                return -ENOMEM;
++        }
++
++        proxy_chan->buffers[0] = (struct idma_proxy_kernel_buffer *)buffer_ptr;
++        // proxy_chan->buffer_phys_addrs[0] = virt_to_phys(proxy_chan->buffers[0]);
++        proxy_chan->buffers[1] = proxy_chan->buffers[0] + 1;
++        proxy_chan->buffer_phys_addrs[1] = proxy_chan->buffer_phys_addrs[0] + sizeof(struct idma_proxy_kernel_buffer);
++
++        pr_info("Allocated src_buffer for channel %d at %lx with phys addr %lx\n",
++                i, (unsigned long)proxy_chan->buffers[0], (unsigned long)proxy_chan->buffer_phys_addrs[0]);
++        pr_info("Allocated dst_buffer for channel %d at %lx with phys addr %lx\n",
++                i, (unsigned long)proxy_chan->buffers[1], (unsigned long)proxy_chan->buffer_phys_addrs[1]);
++
++        return 0;
++}
++
++/**
++ * @brief: Destructs a channel for the iDMA proxy device
++ *
++ * This function destructs a channel for the iDMA proxy device by freeing resources,
++ * destroying the character device, and releasing the DMA channel.
++ *
++ * @param idma_proxy_dev: Pointer to the idma_proxy_device structure representing the iDMA proxy device
++ * @param i: The index of the channel to destruct
++ */
++static void idma_proxy_destruct_channel(struct idma_proxy_device *idma_proxy_dev, int i)
++{
++        struct idma_proxy_channel *proxy_chan = &idma_proxy_dev->channels[i];
++
++        if (proxy_chan->chr_dev)
++        {
++                device_destroy(idma_proxy_dev->device_class, idma_proxy_dev->device_num_base + i);
++                proxy_chan->chr_dev = NULL;
++        }
++        cdev_del(&proxy_chan->cdev);
++        if (proxy_chan->buffers[0])
++        {
++                dmam_free_coherent(proxy_chan->dev, sizeof(struct idma_proxy_kernel_buffer) * 2,
++                                   proxy_chan->buffers[0], proxy_chan->buffer_phys_addrs[0]);
++                proxy_chan->buffers[0] = NULL;
++        }
++        if (proxy_chan->chan)
++        {
++                dma_release_channel(proxy_chan->chan);
++                proxy_chan->chan = NULL;
++        }
++}
++
++/**
++ * @brief: Probes the iDMA proxy platform device
++ *
++ * This function is called when the iDMA proxy platform device is probed.
++ * It initializes the device, allocates resources, and sets up channels.
++ *
++ * @param pdev: Pointer to the platform device structure
++ * @return: 0 on success, negative error code on failure
++ */
++static int idma_proxy_platform_probe(struct platform_device *pdev)
++{
++        struct device *dev = &pdev->dev;
++        struct idma_proxy_device *idma_proxy_dev;
++        int i, ret;
++
++        pr_info("Probing IIS iDMA proxy platform device %s\n", dev_name(dev));
++
++        idma_proxy_dev = (struct idma_proxy_device *)devm_kzalloc(dev, sizeof(struct idma_proxy_device), GFP_KERNEL);
++        if (!idma_proxy_dev)
++                return -ENOMEM;
++
++        idma_proxy_dev->dev = &pdev->dev;
++        platform_set_drvdata(pdev, idma_proxy_dev);
++
++        idma_proxy_dev->n_channels = device_property_read_string_array(&pdev->dev,
++                                                                       "dma-names", NULL, 0);
++
++        if (idma_proxy_dev->n_channels <= 0)
++        {
++                pr_err("No channels found in device tree\n");
++                return -EINVAL;
++        }
++
++        idma_proxy_dev->names = devm_kmalloc_array(dev, idma_proxy_dev->n_channels, sizeof(char *), GFP_KERNEL);
++        if (!idma_proxy_dev->names)
++                return -ENOMEM;
++
++        ret = device_property_read_string_array(&pdev->dev, "dma-names",
++                                                (const char **)idma_proxy_dev->names, idma_proxy_dev->n_channels);
++        // should not fail, but check anyway
++        if (ret < 0)
++                goto of_dma_names_read_failed;
++
++        ret = alloc_chrdev_region(&idma_proxy_dev->device_num_base, 0, idma_proxy_dev->n_channels, "idma_proxy");
++        if (ret)
++        {
++                pr_err("Cannot allocate chrdev\n");
++                goto alloc_chrdev_region_failed;
++        }
++
++        idma_proxy_dev->device_class = class_create(THIS_MODULE, "idma_class");
++        if (IS_ERR(idma_proxy_dev->device_class))
++        {
++                pr_err("Cannot create device class\n");
++                ret = PTR_ERR(idma_proxy_dev->device_class);
++                goto unregister_chrdev;
++        }
++
++        idma_proxy_dev->channels = devm_kcalloc(dev, idma_proxy_dev->n_channels, sizeof(struct idma_proxy_channel), GFP_KERNEL);
++        if (!idma_proxy_dev->channels)
++        {
++                pr_err("Failed to allocate memory for channels\n");
++                ret = -ENOMEM;
++                goto allocate_channels_failed;
++        }
++
++        for (i = 0; i < idma_proxy_dev->n_channels; ++i)
++        {
++                ret = idma_proxy_init_channel(idma_proxy_dev, i);
++                if (ret)
++                {
++                        pr_err("Failed to initialize channel %d\n", i);
++                        goto channel_init_failed;
++                }
++        }
++
++        return 0;
++channel_init_failed:
++        for (i -= 1; i >= 0; --i)
++                idma_proxy_destruct_channel(idma_proxy_dev, i);
++allocate_channels_failed:
++        class_destroy(idma_proxy_dev->device_class);
++        idma_proxy_dev->device_class = NULL;
++unregister_chrdev:
++        unregister_chrdev_region(idma_proxy_dev->device_num_base, idma_proxy_dev->n_channels);
++        idma_proxy_dev->device_num_base = 0;
++alloc_chrdev_region_failed:
++of_dma_names_read_failed:
++        pr_err("Failed to probe iDMA proxy platform device %s\n", dev_name(dev));
++        return ret;
++}
++
++/**
++ * @brief: Removes the iDMA proxy platform device
++ *
++ * This function is called when the iDMA proxy platform device is removed.
++ * It cleans up resources, destroys channels, and unregisters the character devices.
++ *
++ * @param pdev: Pointer to the platform device structure
++ * @return: 0 on success, negative error code on failure
++ */
++static int idma_platform_remove(struct platform_device *pdev)
++{
++        struct idma_proxy_device *idma_proxy_dev = platform_get_drvdata(pdev);
++        int i;
++
++        if (!idma_proxy_dev)
++        {
++                pr_err("No iDMA proxy device found\n");
++                return -ENODEV;
++        }
++
++        for (i = 0; i < idma_proxy_dev->n_channels; ++i)
++                idma_proxy_destruct_channel(idma_proxy_dev, i);
++
++        if (idma_proxy_dev->device_class)
++                class_destroy(idma_proxy_dev->device_class);
++
++        if (idma_proxy_dev->device_num_base)
++                unregister_chrdev_region(idma_proxy_dev->device_num_base, idma_proxy_dev->n_channels);
++        idma_proxy_dev->device_num_base = 0;
++
++        pr_info("Removed IIS iDMA proxy platform device %s successfully\n", dev_name(&pdev->dev));
++        return 0;
++}
++
++static const struct of_device_id idma_match[] = {
++    {.compatible = "eth,idma-proxy"},
++    {/* sentinel */},
++};
++MODULE_DEVICE_TABLE(of, idma_match);
++
++static struct platform_driver idma_proxy_platform_driver = {
++    .probe = idma_proxy_platform_probe,
++    .remove = idma_platform_remove,
++    .driver = {
++        .name = "iis-idma-proxy",
++        .of_match_table = idma_match,
++    },
++};
++module_platform_driver(idma_proxy_platform_driver);
++
++MODULE_DESCRIPTION("IIS iDMA DMA proxy driver");
++MODULE_LICENSE("GPL v2");
++MODULE_AUTHOR("Kevin Schaerer <schkevin@student.ethz.ch>");
++MODULE_VERSION("0.1");
+diff --git a/drivers/dma/idma-proxy.h b/drivers/dma/idma-proxy.h
+new file mode 100644
+index 000000000..8c7a27814
+--- /dev/null
++++ b/drivers/dma/idma-proxy.h
+@@ -0,0 +1,53 @@
++#define KERNEL_BUFFER_SIZE (2 * 1024 * 1024) // 2 MiB
++
++/**
++ * idma_port_type_t - type of the port used for the transfer
++ *
++ * This enum describes the type of the port used for the transfer.
++ * It is used to determine how the source and destination addresses are handled.
++ *
++ * IDMA_KERNEL_BUFFER: The source or destination buffer is a kernel buffer (buffer that can be mapped to user space)
++ * IDMA_COPY_BUFFER: The source or destination buffer is copied into a kernel buffer before transfer
++ * IDMA_USER_DIRECT: The user space mapping is used to get the physical address for the transfer.
++ *                   Please note that the entire source or destination buffer/range must be physically contiguous.
++ *                   Additionally, this will only work if physical address = dma address
++ *                   Not imeplemented yet.
++ */
++typedef enum
++{
++        IDMA_KERNEL_BUFFER = 0,
++        IDMA_COPY_BUFFER = 1,
++        IDMA_USER_DIRECT = 2,
++} idma_port_type_t;
++
++/**
++ * idma_memcpy_transfer_t - structure for 2D transfers
++ *
++ * This structure is used to describe a 2D iDMA transfer operation
++ *
++ * @src:        The source address as user virtual memory address
++ *              Ignored if src_type is IDMA_KERNEL_BUFFER
++ * @dst:        The destination address as user virtual memory address
++ *              Ignored if dst_type is IDMA_KERNEL_BUFFER
++ * @src_type:   The type of the source address
++ * @dst_type:   The type of the destination address
++ * @length:     The number of bytes to transfer
++ * @conf:       Configuration bits, e.g. for decoupling reads and writes. Please refer to the iDMA documentation
++ */
++typedef struct idma_memcpy_transfer
++{
++        uintptr_t src;
++        uintptr_t dst;
++        idma_port_type_t src_type;
++        idma_port_type_t dst_type;
++        size_t length;
++        size_t conf;
++} idma_memcpy_transfer_t;
++
++struct idma_proxy_kernel_buffer
++{
++        uint8_t buffer[KERNEL_BUFFER_SIZE];
++} __attribute__((aligned(4096)));
++
++#define IOCTL_MAGIC '{' // 0x7b
++#define IOCTL_ISSUE_MEMCPY_TRANSFER _IOW(IOCTL_MAGIC, 1, idma_memcpy_transfer_t *)
+-- 
+2.43.0
+
