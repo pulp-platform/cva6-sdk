@@ -1,7 +1,7 @@
 ARCH ?= riscv
 CROSS_COMPILE ?= riscv64-unknown-linux-gnu-
 
-obj-m := iis-idma.o
+obj-m := idma-engine.o
 KDIR ?= ../../buildroot/output/build/linux-v5.10.7
 
 all:
