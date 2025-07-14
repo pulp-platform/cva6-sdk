@@ -75,11 +75,13 @@ tests: install-dir $(CC)
 
 $(CC): $(buildroot_defconfig) $(linux_defconfig) $(busybox_defconfig)
 	make -C buildroot defconfig BR2_DEFCONFIG=../$(buildroot_defconfig)
-	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk) > /dev/null
+	make -C buildroot host-gcc-final elfutils-install $(buildroot-mk)
 	# Prepare future relocation (example HERO CI)
 	make -C buildroot host-patchelf
 	echo `realpath buildroot/output/host` > buildroot/output/host/share/buildroot/sdk-location
 	cd buildroot && HOST_DIR=`realpath output/host` STAGING_DIR=`realpath output/host/riscv64-buildroot-linux-gnu/sysroot` TARGET_DIR=`realpath output/target` PER_PACKAGE_DIR=`pwd`/per-package ./support/scripts/fix-rpath host
+	# If the configs timetamps update, make sure gcc's timestamp too
+	touch $(@)
 
 all: $(CC)
 
@@ -120,9 +122,10 @@ $(MKIMAGE) u-boot/u-boot.bin: $(CC)
 	make -C u-boot -j16 pulp-platform_cheshire_defconfig
 	make -C u-boot -j16 CROSS_COMPILE=$(TOOLCHAIN_PREFIX)
 
-# OpenSBI with u-boot as payload
+# OpenSBI with u-boot as payload (force rebuild since it depends on the FW_PAYLOAD_PATH macro)
+.PHONY: $(RISCV)/fw_payload.bin
 $(RISCV)/fw_payload.bin: $(RISCV)/u-boot.bin
-	make -C opensbi -j16 FW_PAYLOAD_PATH=$< $(sbi-mk)
+	make -C opensbi -j16 FW_PAYLOAD_PATH=$< $(sbi-mk) -B
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf $(RISCV)/fw_payload.elf
 	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/fw_payload.bin
 	# Also bring in dump
