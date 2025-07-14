@@ -1,0 +1,5 @@
+insmod /root/carfield.ko
+# Create hero user
+mkdir /home
+adduser hero -D
+cp -r /root/.ssh /home/hero/.ssh
