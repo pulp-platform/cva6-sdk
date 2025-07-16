@@ -1,7 +1,7 @@
 From e84e6932582961f7e1631597a60ee07c1a5ee795 Mon Sep 17 00:00:00 2001
 From: Cyril Koenig <cyril27koenig@gmail.com>
 Date: Mon, 14 Jul 2025 09:42:40 +0200
-Subject: [PATCH 1/2] ethernet: Bump Xilinx driver back to 6.1.22
+Subject: [PATCH 1/5] ethernet: Bump Xilinx driver back to 6.1.22
 
 ---
  drivers/net/ethernet/xilinx/Kconfig           |    1 -

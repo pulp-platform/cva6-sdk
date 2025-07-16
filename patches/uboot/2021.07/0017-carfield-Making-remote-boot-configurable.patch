@@ -1,0 +1,29 @@
+From f15e202cee3ba6acd80fe386dcfb743eac593a4b Mon Sep 17 00:00:00 2001
+From: Cyril Koenig <cykoenig@iis.ee.ethz.ch>
+Date: Fri, 20 Oct 2023 11:55:19 +0200
+Subject: [PATCH 17/17] carfield: Making remote boot configurable
+
+---
+ configs/pulp-platform_cheshire_defconfig | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/configs/pulp-platform_cheshire_defconfig b/configs/pulp-platform_cheshire_defconfig
+index 1b33ee00d9..773dbe53cb 100644
+--- a/configs/pulp-platform_cheshire_defconfig
++++ b/configs/pulp-platform_cheshire_defconfig
+@@ -12,10 +12,8 @@ CONFIG_BOOTDELAY=5
+ CONFIG_HUSH_PARSER=y
+ CONFIG_USE_BOOTCOMMAND=y
+ # Boot with mmc if mmc probes normally, else boot with spi (get CS from "boot-with" in device tree)
+-CONFIG_BOOTCOMMAND="fdt addr ${fdtcontroladdr}; \
+-if fdt get value tmpvar /soc/eth0 compatible; then dhcp 0x90000000 129.132.24.199:vcu128-01/carfield/uImage; bootm 90000000 - ${fdtcontroladdr}; fi; \
+-if fdt get value boot-with /soc/spi; then sf probe 0:${boot-with}; sf read 90000000 400000 800000; bootm 90000000 - ${fdtcontroladdr}; fi; \
+-if mmc info; then mmc read 90000000 2000 5000; bootm 90000000 - ${fdtcontroladdr}; fi;"
++CONFIG_BOOTCOMMAND="fdt addr ${fdtcontroladdr}; if fdt get value remote-boot /soc/eth0 remote-boot; then dhcp 0x90000000 ${remote-boot}; bootm 90000000 - ${fdtcontroladdr}; fi; if mmc info; then mmc read 90000000 2000 5000; else fdt get value boot-with /soc/spi boot-with; if sf probe 0:${boot-with}; then sf read 90000000 400000 800000; fi; fi; bootm 90000000 - ${fdtcontroladdr};"
++CONFIG_DISPLAY_CPUINFO=y
+ CONFIG_SPL_SPI_FLASH_MTD=y
+ CONFIG_CMD_GPT=y
+ # CONFIG_RANDOM_UUID is not set
+-- 
+2.43.5
+

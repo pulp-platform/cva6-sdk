@@ -1,0 +1,24 @@
+From e424353a32865b8ecb47252892d79d150b05ffa3 Mon Sep 17 00:00:00 2001
+From: Cyril Koenig <cykoenig@iis.ee.ethz.ch>
+Date: Thu, 17 Aug 2023 13:14:23 +0200
+Subject: [PATCH 14/17] config: Set baudrate to 38400
+
+---
+ configs/pulp-platform_cheshire_defconfig | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/configs/pulp-platform_cheshire_defconfig b/configs/pulp-platform_cheshire_defconfig
+index 152f1c61c8..b2af8119f8 100644
+--- a/configs/pulp-platform_cheshire_defconfig
++++ b/configs/pulp-platform_cheshire_defconfig
+@@ -40,6 +40,7 @@ CONFIG_SPI_FLASH_WINBOND=y
+ CONFIG_SPI_FLASH_XMC=y
+ # CONFIG_SPI_FLASH_USE_4K_SECTORS is not set
+ CONFIG_SPI_FLASH_MTD=y
++CONFIG_BAUDRATE=38400
+ CONFIG_SYS_NS16550=y
+ CONFIG_SPI=y
+ CONFIG_OPENTITAN_QSPI=y
+-- 
+2.43.5
+

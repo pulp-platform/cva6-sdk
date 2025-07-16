@@ -13,9 +13,6 @@
 	path = vitetris
 	url = https://github.com/pulp-platform/vitetris.git
 	ignore = dirty
-[submodule "u-boot"]
-	path = u-boot
-	url = https://github.com/pulp-platform/u-boot
 [submodule "opensbi"]
 	path = opensbi
 	url = https://github.com/pulp-platform/opensbi

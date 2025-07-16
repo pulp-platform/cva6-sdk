@@ -1,0 +1,60 @@
+From 7f5d96835a8cd48ec318cdacfc9b56e0c7730978 Mon Sep 17 00:00:00 2001
+From: Cyril Koenig <cyril27koenig@gmail.com>
+Date: Tue, 15 Jul 2025 10:31:08 +0200
+Subject: [PATCH 5/5] Edit __READ_ONCE and __WRITE_ONCE for v6.13
+
+---
+ include/asm-generic/rwonce.h | 18 +++++++++---------
+ 1 file changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/include/asm-generic/rwonce.h b/include/asm-generic/rwonce.h
+index dee109025..b04f29941 100644
+--- a/include/asm-generic/rwonce.h
++++ b/include/asm-generic/rwonce.h
+@@ -23,7 +23,7 @@
+ #ifndef __ASSEMBLY__
+ 
+ #include <linux/compiler_types.h>
+-#include <asm/barrier.h>
++#include <asm/fence.h>
+ #include <linux/kasan-checks.h>
+ #include <linux/kcsan-checks.h>
+ 
+@@ -43,14 +43,14 @@
+  */
+ /*
+  * Ultra-conservative __READ_ONCE definition to support self-invalidation
+- * cache coherency.
++ * cache coherency. TODO: This should use __smp_mb instead of RISCV_FENCE
+  */
+ #ifndef __READ_ONCE
+ #define __READ_ONCE(x)\
+ ({                                                                      \
+-    __smp_mb();                                                         \
++    RISCV_FENCE(rw, rw);                                                \
+     __auto_type _v = *(const volatile __unqual_scalar_typeof(x) *)&(x); \
+-    __smp_mb();                                                         \
++    RISCV_FENCE(rw, rw);                                                \
+     _v;                                                                 \
+ })
+ #endif
+@@ -65,11 +65,11 @@
+  * Ultra-conservative __WRITE_ONCE definition to support self-invalidation
+  * cache coherency.
+  */
+-#define __WRITE_ONCE(x, val)			    \
+-do {									    \
+-    __smp_mb();                             \
+-	*(volatile typeof(x) *)&(x) = (val);	\
+-    __smp_mb();                             \
++#define __WRITE_ONCE(x, val)                   \
++do {                                           \
++    RISCV_FENCE(rw, rw);                       \
++    *(volatile typeof(x) *)&(x) = (val);       \
++    RISCV_FENCE(rw, rw);                       \
+ } while (0)
+ 
+ #define WRITE_ONCE(x, val)						\
+-- 
+2.43.5
+

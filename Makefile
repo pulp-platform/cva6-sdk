@@ -46,7 +46,8 @@ endif
 # default make flags
 isa-sim-mk              = -j$(NR_CORES)
 tests-mk         		= -j$(NR_CORES)
-buildroot-mk       		= -j$(NR_CORES)
+# by default buildroot does not support top level -j
+buildroot-mk       		=
 
 # linux image
 buildroot_defconfig = configs/buildroot$(XLEN)_defconfig
@@ -107,36 +108,24 @@ $(RISCV)/Image.gz: $(RISCV)/Image
 	$(GZIP_BIN) -9 --force $< > $@
 
 # U-Boot-compatible Linux image
-$(RISCV)/uImage: $(RISCV)/Image.gz $(MKIMAGE)
-	$(MKIMAGE) -A riscv -O linux -T kernel -a $(UIMAGE_LOAD_ADDRESS) -e $(UIMAGE_ENTRY_POINT) -C gzip -n "CV$(XLEN)A6Linux" -d $< $@
+buildroot/output/host/bin/mkimage:
+	make -C buildroot $(buildroot-mk) uboot-host-tools
+$(RISCV)/uImage: $(RISCV)/Image.gz buildroot/output/host/bin/mkimage
+	buildroot/output/host/bin/mkimage -A riscv -O linux -T kernel -a $(UIMAGE_LOAD_ADDRESS) -e $(UIMAGE_ENTRY_POINT) -C gzip -n "CV$(XLEN)A6Linux" -d $< $@
 
-$(RISCV)/u-boot.bin: u-boot/u-boot.bin
-	mkdir -p $(RISCV)
-	cp $< $@
-	# Also bring ELF and build annotated dump into install DIR
-	cp u-boot/u-boot $(RISCV)/
-	$(TOOLCHAIN_PREFIX)objdump -d -S  u-boot/u-boot > $(RISCV)/u-boot.dump
+buildroot/output/images/u-boot.bin:
+	make -C buildroot $(buildroot-mk) uboot-install
+$(RISCV)/u-boot.bin: buildroot/output/images/u-boot.bin
+	cp $< $(RISCV)
 
-
-$(MKIMAGE) u-boot/u-boot.bin: $(CC)
-	make -C u-boot -j16 pulp-platform_cheshire_defconfig
-	make -C u-boot -j16 CROSS_COMPILE=$(TOOLCHAIN_PREFIX)
-
-# OpenSBI with u-boot as payload (force rebuild since it depends on the FW_PAYLOAD_PATH macro)
-.PHONY: $(RISCV)/fw_payload.bin
-$(RISCV)/fw_payload.bin: $(RISCV)/u-boot.bin
-	make -C opensbi -j16 FW_PAYLOAD_PATH=$< $(sbi-mk) -B
-	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf $(RISCV)/fw_payload.elf
-	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/fw_payload.bin
+# OpenSBI with u-boot as payload
+buildroot/output/images/fw_payload.elf:
+	make -C buildroot $(buildroot-mk) opensbi-install
+$(RISCV)/fw_payload.bin: buildroot/output/images/fw_payload.elf
+	cp $< $(RISCV)
+	cp $(subst .bin,.elf,$<) $(RISCV)
 	# Also bring in dump
-	$(TOOLCHAIN_PREFIX)objdump -d -S  opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf > $(RISCV)/fw_payload.dump
-
-# OpenSBI for Spike with Linux as payload
-$(RISCV)/spike_fw_payload.elf: PLATFORM=generic
-$(RISCV)/spike_fw_payload.elf: $(RISCV)/Image
-	make -C opensbi FW_PAYLOAD_PATH=$< $(sbi-mk)
-	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.elf $(RISCV)/spike_fw_payload.elf
-	cp opensbi/build/platform/$(PLATFORM)/firmware/fw_payload.bin $(RISCV)/spike_fw_payload.bin
+	$(TOOLCHAIN_PREFIX)objdump -d -S $< > $(RISCV)/fw_payload.dump
 
 # need to run flash-sdcard with sudo -E, be careful to set the correct SDDEVICE
 DT_SECTORSTART 		:= 2048
@@ -171,8 +160,6 @@ images: $(CC) $(RISCV)/fw_payload.bin $(RISCV)/uImage
 clean:
 	rm -rf $(RISCV)/vmlinux cachetest/*.elf rootfs/tetris rootfs/cachetest.elf
 	rm -rf $(RISCV)/fw_payload.bin $(RISCV)/uImage $(RISCV)/Image.gz
-	make -C u-boot clean
-	make -C opensbi distclean
 
 clean-all: clean
 	rm -rf $(RISCV) riscv-isa-sim/build riscv-tests/build

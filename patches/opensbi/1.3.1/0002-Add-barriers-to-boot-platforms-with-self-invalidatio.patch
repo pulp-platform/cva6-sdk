@@ -1,0 +1,44 @@
+From 2f775033e6c5d700a2afb25bf53d45bbcc09375c Mon Sep 17 00:00:00 2001
+From: Emanuele Parisi <emanuele.parisi@protonmail.com>
+Date: Thu, 5 Oct 2023 18:32:52 +0200
+Subject: [PATCH 2/4] Add barriers to boot platforms with self-invalidation
+ cache-coherence
+
+---
+ firmware/fw_base.S | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/firmware/fw_base.S b/firmware/fw_base.S
+index b947423..d49bbe6 100644
+--- a/firmware/fw_base.S
++++ b/firmware/fw_base.S
+@@ -181,6 +181,8 @@ _wait_relocate_copy_done:
+ 1:
+ 	/* waitting for relocate copy done (_boot_status == 1) */
+ 	li	t4, BOOT_STATUS_RELOCATE_DONE
++	/* add memory barrier to support self-invalidation cache coherence */
++	fence	rw, rw
+ 	REG_L	t5, 0(t2)
+ 	/* Reduce the bus traffic so that boot hart may proceed faster */
+ 	nop
+@@ -417,6 +419,8 @@ _fdt_reloc_again:
+ 	add	t1, t1, __SIZEOF_POINTER__
+ 	blt	t1, t2, _fdt_reloc_again
+ _fdt_reloc_done:
++	/* add memory barrier to support self-invalidation cache coherence */
++	fence	rw, rw
+ 
+ 	/* mark boot hart done */
+ 	li	t0, BOOT_STATUS_BOOT_HART_DONE
+@@ -429,6 +433,8 @@ _fdt_reloc_done:
+ _wait_for_boot_hart:
+ 	li	t0, BOOT_STATUS_BOOT_HART_DONE
+ 	lla	t1, _boot_status
++	/* add memory barrier to support self-invalidation cache coherence */
++	fence	rw, rw
+ 	REG_L	t1, 0(t1)
+ 	/* Reduce the bus traffic so that boot hart may proceed faster */
+ 	nop
+-- 
+2.43.5
+

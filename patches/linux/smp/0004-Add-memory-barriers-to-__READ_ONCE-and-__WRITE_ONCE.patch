@@ -1,0 +1,63 @@
+From 1dd5a3a56eaf6efac5bf3fe01777d16e1f852cd4 Mon Sep 17 00:00:00 2001
+From: Emanuele Parisi <emanuele.parisi@protonmail.com>
+Date: Mon, 25 Sep 2023 12:00:03 +0200
+Subject: [PATCH 4/5] Add memory barriers to __READ_ONCE and __WRITE_ONCE
+
+---
+ include/asm-generic/rwonce.h | 25 +++++++++++++++++++++----
+ 1 file changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/include/asm-generic/rwonce.h b/include/asm-generic/rwonce.h
+index 8d0a6280e..dee109025 100644
+--- a/include/asm-generic/rwonce.h
++++ b/include/asm-generic/rwonce.h
+@@ -23,6 +23,7 @@
+ #ifndef __ASSEMBLY__
+ 
+ #include <linux/compiler_types.h>
++#include <asm/barrier.h>
+ #include <linux/kasan-checks.h>
+ #include <linux/kcsan-checks.h>
+ 
+@@ -40,8 +41,18 @@
+  * Use __READ_ONCE() instead of READ_ONCE() if you do not require any
+  * atomicity. Note that this may result in tears!
+  */
++/*
++ * Ultra-conservative __READ_ONCE definition to support self-invalidation
++ * cache coherency.
++ */
+ #ifndef __READ_ONCE
+-#define __READ_ONCE(x)	(*(const volatile __unqual_scalar_typeof(x) *)&(x))
++#define __READ_ONCE(x)\
++({                                                                      \
++    __smp_mb();                                                         \
++    __auto_type _v = *(const volatile __unqual_scalar_typeof(x) *)&(x); \
++    __smp_mb();                                                         \
++    _v;                                                                 \
++})
+ #endif
+ 
+ #define READ_ONCE(x)							\
+@@ -50,9 +61,15 @@
+ 	__READ_ONCE(x);							\
+ })
+ 
+-#define __WRITE_ONCE(x, val)						\
+-do {									\
+-	*(volatile typeof(x) *)&(x) = (val);				\
++/*
++ * Ultra-conservative __WRITE_ONCE definition to support self-invalidation
++ * cache coherency.
++ */
++#define __WRITE_ONCE(x, val)			    \
++do {									    \
++    __smp_mb();                             \
++	*(volatile typeof(x) *)&(x) = (val);	\
++    __smp_mb();                             \
+ } while (0)
+ 
+ #define WRITE_ONCE(x, val)						\
+-- 
+2.43.5
+

@@ -1,0 +1,50 @@
+From 6a7817c26dfe17a1ca2a07585aadd3b8f2412ecf Mon Sep 17 00:00:00 2001
+From: Emanuele Parisi <emanuele.parisi@protonmail.com>
+Date: Wed, 6 Sep 2023 19:04:34 +0200
+Subject: [PATCH 3/5] Resolve data races for self-invalidation coherence
+
+---
+ arch/riscv/include/asm/processor.h      | 1 +
+ arch/riscv/include/asm/vdso/processor.h | 1 +
+ arch/riscv/kernel/head.S                | 1 +
+ 3 files changed, 3 insertions(+)
+
+diff --git a/arch/riscv/include/asm/processor.h b/arch/riscv/include/asm/processor.h
+index 5f56eb9d1..4f310d177 100644
+--- a/arch/riscv/include/asm/processor.h
++++ b/arch/riscv/include/asm/processor.h
+@@ -146,6 +146,7 @@ extern unsigned long __get_wchan(struct task_struct *p);
+ 
+ static inline void wait_for_interrupt(void)
+ {
++	__smp_mb();
+ 	__asm__ __volatile__ ("wfi");
+ }
+ 
+diff --git a/arch/riscv/include/asm/vdso/processor.h b/arch/riscv/include/asm/vdso/processor.h
+index 8f383f05a..ab8685eb4 100644
+--- a/arch/riscv/include/asm/vdso/processor.h
++++ b/arch/riscv/include/asm/vdso/processor.h
+@@ -9,6 +9,7 @@
+ 
+ static inline void cpu_relax(void)
+ {
++	__smp_mb();
+ #ifdef __riscv_muldiv
+ 	int dummy;
+ 	/* In lieu of a halt instruction, induce a long-latency stall. */
+diff --git a/arch/riscv/kernel/head.S b/arch/riscv/kernel/head.S
+index 356d5397b..225944e35 100644
+--- a/arch/riscv/kernel/head.S
++++ b/arch/riscv/kernel/head.S
+@@ -349,6 +349,7 @@ SYM_CODE_START(_start_kernel)
+ 	 */
+ .Lwait_for_cpu_up:
+ 	/* FIXME: We should WFI to save some energy here. */
++	fence
+ 	REG_L sp, (a1)
+ 	REG_L tp, (a2)
+ 	beqz sp, .Lwait_for_cpu_up
+-- 
+2.43.5
+

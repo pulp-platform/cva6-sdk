@@ -3,3 +3,4 @@ insmod /root/carfield.ko
 mkdir /home
 adduser hero -D
 cp -r /root/.ssh /home/hero/.ssh
+udhcpc

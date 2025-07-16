@@ -1,10 +1,11 @@
 CONFIG_DEFAULT_HOSTNAME="cheshire-fpga"
 # CONFIG_CROSS_MEMORY_ATTACH is not set
+CONFIG_NO_HZ_FULL=y
 CONFIG_BLK_DEV_INITRD=y
 CONFIG_INITRAMFS_SOURCE="${BR_BINARIES_DIR}/rootfs.cpio"
 CONFIG_SMP=y
 CONFIG_HZ_100=y
-CONFIG_CMDLINE="earlyprintk debug loglevel=7"
+CONFIG_CMDLINE="earlyprintk debug loglevel=7 nohz_full=1 isolcpus=1 rcu_nocbs=1"
 # CONFIG_GCC_PLUGINS is not set
 CONFIG_MODULES=y
 CONFIG_MODULE_UNLOAD=y

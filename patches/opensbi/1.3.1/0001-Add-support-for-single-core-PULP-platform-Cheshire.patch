@@ -1,0 +1,91 @@
+From 0c0a9d098f65f56de8f0d77de28ff152ca63aac0 Mon Sep 17 00:00:00 2001
+From: Emanuele Parisi <emanuele.parisi@protonmail.com>
+Date: Mon, 4 Sep 2023 18:29:29 +0200
+Subject: [PATCH 1/4] Add support for single-core PULP platform Cheshire
+
+---
+ platform/generic/Kconfig                  |  4 ++++
+ platform/generic/configs/defconfig        |  3 ++-
+ platform/generic/pulp-platform/cheshire.c | 20 ++++++++++++++++++++
+ platform/generic/pulp-platform/objects.mk |  9 +++++++++
+ 4 files changed, 35 insertions(+), 1 deletion(-)
+ create mode 100644 platform/generic/pulp-platform/cheshire.c
+ create mode 100644 platform/generic/pulp-platform/objects.mk
+
+diff --git a/platform/generic/Kconfig b/platform/generic/Kconfig
+index 72768ed..aa0461b 100644
+--- a/platform/generic/Kconfig
++++ b/platform/generic/Kconfig
+@@ -52,6 +52,10 @@ config PLATFORM_STARFIVE_JH7110
+ 	bool "StarFive JH7110 support"
+ 	default n
+ 
++config PLATFORM_PULP_PLATFORM_CHESHIRE
++	bool "PULP platform Cheshire support"
++	default n
++
+ source "$(OPENSBI_SRC_DIR)/platform/generic/andes/Kconfig"
+ 
+ endif
+diff --git a/platform/generic/configs/defconfig b/platform/generic/configs/defconfig
+index 671281b..45f7664 100644
+--- a/platform/generic/configs/defconfig
++++ b/platform/generic/configs/defconfig
+@@ -4,6 +4,7 @@ CONFIG_PLATFORM_RENESAS_RZFIVE=y
+ CONFIG_PLATFORM_SIFIVE_FU540=y
+ CONFIG_PLATFORM_SIFIVE_FU740=y
+ CONFIG_PLATFORM_STARFIVE_JH7110=y
++CONFIG_PLATFORM_PULP_PLATFORM_CHESHIRE=y
+ CONFIG_FDT_GPIO=y
+ CONFIG_FDT_GPIO_DESIGNWARE=y
+ CONFIG_FDT_GPIO_SIFIVE=y
+@@ -38,4 +39,4 @@ CONFIG_FDT_SERIAL_XILINX_UARTLITE=y
+ CONFIG_FDT_TIMER=y
+ CONFIG_FDT_TIMER_MTIMER=y
+ CONFIG_FDT_TIMER_PLMT=y
+-CONFIG_SERIAL_SEMIHOSTING=y
++# CONFIG_SERIAL_SEMIHOSTING is not set
+diff --git a/platform/generic/pulp-platform/cheshire.c b/platform/generic/pulp-platform/cheshire.c
+new file mode 100644
+index 0000000..e5cd436
+--- /dev/null
++++ b/platform/generic/pulp-platform/cheshire.c
+@@ -0,0 +1,20 @@
++/*
++ * Copyright 2023 ETH Zurich and University of Bologna.
++ *
++ * Authors:
++ *   Emanuele Parisi <emanuele.parisi@protonmail.com>
++ */
++
++#include <sbi_utils/fdt/fdt_helper.h>
++#include <platform_override.h>
++
++
++static const struct fdt_match pulp_platform_cheshire_match[] = {
++	{ .compatible = "eth,cheshire-dev" },
++	{ },
++};
++
++
++const struct platform_override pulp_platform_cheshire = {
++	.match_table = pulp_platform_cheshire_match
++};
+diff --git a/platform/generic/pulp-platform/objects.mk b/platform/generic/pulp-platform/objects.mk
+new file mode 100644
+index 0000000..6c96406
+--- /dev/null
++++ b/platform/generic/pulp-platform/objects.mk
+@@ -0,0 +1,9 @@
++#
++# Copyright 2023 ETH Zurich and University of Bologna.
++#
++# Authors:
++#   Emanuele Parisi <emanuele.parisi@protonmail.com>
++#
++
++carray-platform_override_modules-$(CONFIG_PLATFORM_PULP_PLATFORM_CHESHIRE) += pulp_platform_cheshire
++platform-objs-$(CONFIG_PLATFORM_PULP_PLATFORM_CHESHIRE) += pulp-platform/cheshire.o
+-- 
+2.43.5
+
