@@ -1,0 +1,9 @@
+*.o
+*.ko
+*.cmd
+*.mod
+*.mod.c
+modules.order
+Module.symvers
+example*
+!example*.c
