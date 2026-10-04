@@ -114,6 +114,7 @@ $(RISCV)/u-boot.bin: u-boot/u-boot.bin
 
 $(MKIMAGE) u-boot/u-boot.bin: $(CC)
 	make -C u-boot pulp-platform_cheshire_defconfig
+	sed -i 's/CONFIG_BAUDRATE=38400/CONFIG_BAUDRATE=115200/' u-boot/.config
 	make -C u-boot CROSS_COMPILE=$(TOOLCHAIN_PREFIX)
 
 # OpenSBI with u-boot as payload
